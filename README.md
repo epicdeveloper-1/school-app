@@ -38,6 +38,8 @@ Then open:
 
 After installing, launch **Weekly Strategy** from the Start Menu like any other app.
 
+> The desktop shell serves the static build over `http://127.0.0.1` so CSS/JS load correctly (loading `file://` breaks Next asset paths).
+
 ### Option B — develop in a desktop window
 
 Terminal 1:
