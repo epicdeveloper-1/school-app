@@ -18,12 +18,15 @@ Then open [http://127.0.0.1:43123](http://127.0.0.1:43123).
 
 ## Scripts
 
-| Command         | Description              |
-| --------------- | ------------------------ |
-| `npm run dev`   | Dev server on port 43123 |
-| `npm run build` | Production build         |
-| `npm run start` | Start production server  |
-| `npm run lint`  | Run ESLint               |
+| Command         | Description                                    |
+| --------------- | ---------------------------------------------- |
+| `npm run dev`   | Dev server on port 43123 (Webpack; Windows-safe) |
+| `npm run build` | Production build                               |
+| `npm run start` | Start production server                        |
+| `npm run lint`  | Run ESLint                                     |
+
+> Dev uses `--webpack` so it works on Windows machines that block Next’s native SWC binary (Turbopack requires that binary).
+
 
 ## Stack
 
