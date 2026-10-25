@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
-import { ChevronLeft, Clock, Hourglass, Tags } from "lucide-react";
+import { ChevronLeft, Clock, CornerDownRight, Hourglass, Tags } from "lucide-react";
 import { BoxTagList } from "@/components/box-tag-picker";
 import { Input } from "@/components/ui/input";
 import type { BoxTag } from "@/lib/box-tags";
@@ -35,6 +35,7 @@ type BoxContextMenuProps = {
   onDuration: (minutes: number | undefined) => void;
   onTime: (time: BoardTimeRange | null) => void;
   onTags: (tags: BoxTag[]) => void;
+  onAddSubBox?: () => void;
   onClose: () => void;
 };
 
@@ -57,6 +58,7 @@ export function BoxContextMenu({
   onDuration,
   onTime,
   onTags,
+  onAddSubBox,
   onClose,
 }: BoxContextMenuProps) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -130,7 +132,7 @@ export function BoxContextMenu({
       onMouseDown={holdThroughScroll}
       onClick={(event) => event.stopPropagation()}
       onContextMenu={(event) => event.preventDefault()}
-      className="fixed z-[80] w-52 rounded-xl border border-border/80 bg-white p-1.5 shadow-lg"
+      className="fixed z-[80] w-60 rounded-xl border border-border/80 bg-white p-1.5 shadow-lg"
       style={{
         left: pos?.left ?? x,
         top: pos?.top ?? y,
@@ -139,6 +141,17 @@ export function BoxContextMenu({
     >
       {panel === "menu" ? (
         <>
+          {onAddSubBox && (
+            <MenuItem
+              icon={<CornerDownRight className="size-3.5" />}
+              label="Add sub-box"
+              hint="Shift+Enter"
+              onClick={() => {
+                onAddSubBox();
+                onClose();
+              }}
+            />
+          )}
           <MenuItem
             icon={<Hourglass className="size-3.5" />}
             label={hasDuration ? "Edit duration" : "Add duration"}
@@ -270,10 +283,12 @@ function eventInsideMenu(event: Event, root: HTMLElement | null) {
 function MenuItem({
   icon,
   label,
+  hint,
   onClick,
 }: {
   icon: ReactNode;
   label: string;
+  hint?: string;
   onClick: () => void;
 }) {
   return (
@@ -285,7 +300,10 @@ function MenuItem({
       className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-ink hover:bg-secondary/70"
     >
       <span className="text-muted-foreground">{icon}</span>
-      {label}
+      <span className="min-w-0 flex-1">{label}</span>
+      {hint ? (
+        <span className="shrink-0 text-[10px] text-muted-foreground">{hint}</span>
+      ) : null}
     </button>
   );
 }

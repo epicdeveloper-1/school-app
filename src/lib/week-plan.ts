@@ -1,5 +1,6 @@
 import { readStorage, writeStorage } from "./storage";
 import type { BoxTag } from "./box-tags";
+import type { SubBox } from "./sub-boxes";
 
 export type DayKey =
   | "monday"
@@ -86,6 +87,10 @@ export type WeekPlan = {
    * board box toggles the same reminder on the Reminders page.
    */
   pinnedReminders?: Partial<Record<DayKey, string[]>>;
+  /**
+   * Indented sub-boxes keyed by stable board row id. Hidden until expanded.
+   */
+  subboxes?: Record<string, SubBox[]>;
 };
 
 /** Stable week-plan key for a CS 234 checklist overlay estimate. */

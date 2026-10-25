@@ -9,7 +9,6 @@ import {
   useState,
   type Dispatch,
   type MouseEvent as ReactMouseEvent,
-  type KeyboardEvent,
   type ReactNode,
   type SetStateAction,
 } from "react";
@@ -34,7 +33,9 @@ import {
   DayTimingSummary,
   TaskEstimateInput,
 } from "@/components/day-timing";
-import { TaskRichText } from "@/components/task-rich-text";
+import { BoxText } from "@/components/box-text";
+import { SubBoxList, SubBoxToggle } from "@/components/sub-box-list";
+import { handleTaskLinkKey } from "@/components/task-link-key";
 import {
   BoxTag,
   compareBoardBoxes,
@@ -47,7 +48,8 @@ import { DATA_SYNC_EVENT } from "@/lib/tag-data-sync";
 import type { TagChipUndoState } from "@/lib/tag-chip-key";
 import { handleTimeChipKey } from "@/lib/time-chip-key";
 import type { TimeChipUndoState } from "@/lib/time-chip-key";
-import { applyLinkAtSelection } from "@/lib/task-links";
+import { visibleTaskText } from "@/lib/task-links";
+import { normalizeSubBoxMap, type SubBox } from "@/lib/sub-boxes";
 import {
   detachBoardTime,
   formatTimeRange,
@@ -528,36 +530,6 @@ function normalizeDayBoxOrder(
   return Object.keys(next).length > 0 ? next : undefined;
 }
 
-function handleTaskLinkKey(
-  e: KeyboardEvent<HTMLInputElement>,
-  value: string,
-  onChange: (next: string) => void,
-  onBeforePrompt?: () => void,
-  onAfterPrompt?: () => void,
-): boolean {
-  if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "k") return false;
-  e.preventDefault();
-  const input = e.currentTarget;
-  onBeforePrompt?.();
-  let applied: ReturnType<typeof applyLinkAtSelection> = null;
-  try {
-    applied = applyLinkAtSelection(
-      value,
-      input.selectionStart ?? 0,
-      input.selectionEnd ?? 0,
-    );
-  } finally {
-    onAfterPrompt?.();
-  }
-  if (!applied) return true;
-  onChange(applied.value);
-  requestAnimationFrame(() => {
-    input.focus();
-    input.setSelectionRange(applied.selectionStart, applied.selectionEnd);
-  });
-  return true;
-}
-
 type BoardRowLiProps = {
   rowId: string;
   label: string;
@@ -571,6 +543,8 @@ type BoardRowLiProps = {
   setDropIndicator: Dispatch<SetStateAction<DropIndicator | null>>;
   onReorder: (fromId: string, toId: string, edge: "before" | "after") => void;
   onContextMenu?: (event: ReactMouseEvent<HTMLLIElement>) => void;
+  leading?: ReactNode;
+  footer?: ReactNode;
   children: ReactNode;
 };
 
@@ -587,6 +561,8 @@ function BoardRowLi({
   setDropIndicator,
   onReorder,
   onContextMenu,
+  leading,
+  footer,
   children,
 }: BoardRowLiProps) {
   return (
@@ -606,7 +582,13 @@ function BoardRowLi({
       className="rounded-lg px-1 py-0.5 group"
       draggingClassName="rounded-lg border-2 border-ink/70 bg-transparent px-1 py-0.5 opacity-35 group"
     >
-      <div className="flex min-w-0 items-start gap-2">{children}</div>
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 items-start gap-2">
+          {leading}
+          {children}
+        </div>
+        {footer}
+      </div>
     </ReorderRow>
   );
 }
@@ -644,6 +626,7 @@ function normalizePlan(plan: WeekPlan): WeekPlan {
   const dayBoxOrder = normalizeDayBoxOrder(plan.dayBoxOrder);
   const carriedBoxes = normalizeCarriedBoxes(plan.carriedBoxes);
   const pinnedReminders = normalizePinnedReminders(plan.pinnedReminders);
+  const subboxes = normalizeSubBoxMap(plan.subboxes);
   // Drop legacy week-type fields from older saved plans.
   const {
     weekType: _weekType,
@@ -669,6 +652,7 @@ function normalizePlan(plan: WeekPlan): WeekPlan {
     dayBoxOrder,
     carriedBoxes,
     pinnedReminders,
+    subboxes,
   };
 }
 
@@ -727,6 +711,12 @@ export function WeeklyStrategyBoard() {
     rowId: string;
   } | null>(null);
   const closeBoxMenu = useCallback(() => setBoxMenu(null), []);
+  /** Row ids whose sub-boxes are expanded. Missing ids stay collapsed. */
+  const [openSubs, setOpenSubs] = useState<Record<string, boolean>>({});
+  const [subFocus, setSubFocus] = useState<{
+    rowId: string;
+    editId?: string;
+  } | null>(null);
 
   const weekDues = useMemo(
     () => (plan ? eventsForWeek(dueEvents, plan.weekOf) : []),
@@ -877,6 +867,8 @@ export function WeeklyStrategyBoard() {
     setDragHeight(0);
     setDropIndicator(null);
     setBoxMenu(null);
+    setOpenSubs({});
+    setSubFocus(null);
     setPlan((prev) => {
       if (prev) cachePlan(prev);
       const stored = peekPlan(weekOf);
@@ -908,6 +900,8 @@ export function WeeklyStrategyBoard() {
       const dayBoxOrder = { ...prev.dayBoxOrder };
       if (dayOrder && dayOrder.length > 0) dayBoxOrder[day] = dayOrder;
       else delete dayBoxOrder[day];
+      const subboxes = { ...(prev.subboxes ?? {}) };
+      delete subboxes[id];
       return {
         ...prev,
         days: {
@@ -916,6 +910,7 @@ export function WeeklyStrategyBoard() {
         },
         dayBoxOrder:
           Object.keys(dayBoxOrder).length > 0 ? dayBoxOrder : undefined,
+        subboxes: Object.keys(subboxes).length > 0 ? subboxes : undefined,
       };
     });
     setEditingTask((cur) => (cur?.day === day && cur.id === id ? null : cur));
@@ -1170,6 +1165,97 @@ export function WeeklyStrategyBoard() {
 
   const weekOf = plan.weekOf;
   const csWeek = csWeekNumberForBoardWeek(weekOf);
+
+  const subboxesFor = (row: DayBoardRow, explicitWeek?: string): SubBox[] => {
+    const week = row.carry?.sourceWeekOf ?? explicitWeek ?? weekOf;
+    const source = week === weekOf ? plan : planForWeek(week);
+    return source.subboxes?.[boardRowId(row)] ?? [];
+  };
+
+  function setRowSubboxes(
+    row: DayBoardRow,
+    day: DayKey,
+    next: SubBox[],
+    explicitWeek?: string,
+  ) {
+    const writeWeek = row.carry?.sourceWeekOf ?? explicitWeek ?? weekOf;
+    const id = boardRowId(row);
+    patchWeekPlan(writeWeek, (prev) => {
+      const map = { ...(prev.subboxes ?? {}) };
+      if (next.length === 0) delete map[id];
+      else map[id] = next;
+      return {
+        ...prev,
+        subboxes: Object.keys(map).length > 0 ? map : undefined,
+      };
+    });
+  }
+
+  function addSubBox(week: string, rowId: string, text = "") {
+    const sub: SubBox = { id: createId(), text, done: false };
+    patchWeekPlan(week, (prev) => ({
+      ...prev,
+      subboxes: {
+        ...(prev.subboxes ?? {}),
+        [rowId]: [...(prev.subboxes?.[rowId] ?? []), sub],
+      },
+    }));
+    setOpenSubs((cur) => ({ ...cur, [rowId]: true }));
+    setSubFocus({ rowId, editId: text ? undefined : sub.id });
+  }
+
+  function addDraftSubBox(day: DayKey) {
+    const rows = sortedDayRows(day);
+    const parent = [...rows].reverse().find((row) => !row.carry) ?? null;
+    const resolved = resolveBoxTime(drafts[day], draftTimes[day]);
+    if (
+      !parent ||
+      draftTags[day].length > 0 ||
+      resolved.time
+    ) {
+      addTask(day);
+      return;
+    }
+    addSubBox(weekOf, boardRowId(parent), resolved.text.trim());
+    setDrafts((current) => ({ ...current, [day]: "" }));
+    timeChipUndoRef.current = null;
+    tagChipUndoRef.current = null;
+  }
+
+  function setOwnedBoxText(day: DayKey, row: DayBoardRow, text: string) {
+    if (row.kind === "task") {
+      const writeDay = row.carry?.sourceDay ?? day;
+      const writeWeek = row.carry?.sourceWeekOf ?? weekOf;
+      patchWeekPlan(writeWeek, (prev) => ({
+        ...prev,
+        days: {
+          ...prev.days,
+          [writeDay]: prev.days[writeDay].map((task) =>
+            task.id === row.item.id
+              ? { ...task, text, optional: undefined }
+              : task,
+          ),
+        },
+      }));
+      return;
+    }
+    if (row.kind === "routine") {
+      const existing = recurringTodos.find((todo) => todo.id === row.item.todoId);
+      if (!existing) return;
+      void saveRecurringTodo({
+        id: existing.id,
+        text: text.trim() || existing.text,
+        tags: existing.tags,
+        day: existing.day,
+        ...(existing.startTime ? { startTime: existing.startTime } : {}),
+        ...(existing.endTime ? { endTime: existing.endTime } : {}),
+      });
+      return;
+    }
+    if (row.kind === "reminder") {
+      void updateReminder(row.item.reminderId, { text });
+    }
+  }
 
   const planForWeek = (targetWeekOf: string): WeekPlan => {
     void planRevision;
@@ -2059,6 +2145,48 @@ export function WeeklyStrategyBoard() {
                         onContextMenu: (event: ReactMouseEvent<HTMLLIElement>) =>
                           openBoxMenu(event, day.key, row),
                       };
+                      const subs = subboxesFor(row);
+                      const subOpen = openSubs[rowId] === true;
+                      const subLeading = (
+                        <SubBoxToggle
+                          count={subs.length}
+                          open={subOpen}
+                          onToggle={() =>
+                            setOpenSubs((cur) => ({
+                              ...cur,
+                              [rowId]: cur[rowId] !== true,
+                            }))
+                          }
+                        />
+                      );
+                      const subFooter =
+                        subOpen && subs.length > 0 ? (
+                          <div className="mt-1 ml-7 border-l border-seafoam/40 pl-2.5">
+                            <SubBoxList
+                              items={subs}
+                              onChange={(next) =>
+                                setRowSubboxes(row, day.key, next)
+                              }
+                              pendingEditId={
+                                subFocus?.rowId === rowId
+                                  ? (subFocus.editId ?? null)
+                                  : null
+                              }
+                              onPendingHandled={() =>
+                                setSubFocus((cur) =>
+                                  cur?.rowId === rowId
+                                    ? { rowId: cur.rowId }
+                                    : cur,
+                                )
+                              }
+                            />
+                          </div>
+                        ) : null;
+                      const rowShellWithSubs = {
+                        ...rowShell,
+                        leading: subLeading,
+                        footer: subFooter,
+                      };
 
                       if (row.kind === "event") {
                         const item = row.item;
@@ -2067,7 +2195,7 @@ export function WeeklyStrategyBoard() {
                             ? formatTimeRange(item.startTime, item.endTime)
                             : null;
                         return (
-                          <BoardRowLi key={rowId} {...rowShell}>
+                          <BoardRowLi key={rowId} {...rowShellWithSubs}>
                             <Checkbox
                               checked={item.done}
                               onCheckedChange={() =>
@@ -2145,7 +2273,7 @@ export function WeeklyStrategyBoard() {
                               `${require("@/lib/personal/labels").personalCsBoardPrefix()} | ${item.label}`;
                         const tags = csBoardTags(item, noteWeek);
                         return (
-                          <BoardRowLi key={rowId} {...rowShell}>
+                          <BoardRowLi key={rowId} {...rowShellWithSubs}>
                             <Checkbox
                               checked={item.done}
                               onCheckedChange={() =>
@@ -2205,7 +2333,7 @@ export function WeeklyStrategyBoard() {
                       if (row.kind === "reminder") {
                         const item = row.item;
                         return (
-                          <BoardRowLi key={rowId} {...rowShell}>
+                          <BoardRowLi key={rowId} {...rowShellWithSubs}>
                             <Checkbox
                               checked={item.done}
                               onCheckedChange={() =>
@@ -2224,15 +2352,13 @@ export function WeeklyStrategyBoard() {
                                 dimmed={item.done}
                                 separator={Boolean(item.text)}
                               />
-                              <span
-                                className={
-                                  item.done
-                                    ? "text-muted-foreground"
-                                    : "text-foreground"
+                              <BoxText
+                                text={item.text}
+                                dimmed={item.done}
+                                onChange={(text) =>
+                                  setOwnedBoxText(day.key, row, text)
                                 }
-                              >
-                                {item.text}
-                              </span>
+                              />
                             </span>
                             <TaskEstimateInput
                               minutes={estimateMinutesFor(row)}
@@ -2272,7 +2398,7 @@ export function WeeklyStrategyBoard() {
                           </span>
                         ) : null;
                         return (
-                          <BoardRowLi key={rowId} {...rowShell}>
+                          <BoardRowLi key={rowId} {...rowShellWithSubs}>
                             <Checkbox
                               checked={item.done}
                               onCheckedChange={() =>
@@ -2377,6 +2503,15 @@ export function WeeklyStrategyBoard() {
                                     ) {
                                       return;
                                     }
+                                    if (e.key === "Enter" && e.shiftKey) {
+                                      e.preventDefault();
+                                      const week =
+                                        editingTask.sourceWeekOf ?? weekOf;
+                                      const id = editingTask.id;
+                                      commitEditTask();
+                                      addSubBox(week, id, "");
+                                      return;
+                                    }
                                     if (e.key === "Enter") {
                                       e.preventDefault();
                                       commitEditTask();
@@ -2402,12 +2537,27 @@ export function WeeklyStrategyBoard() {
                                 />
                               </div>
                             ) : editable ? (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  beginEditRoutine(day.key, item)
-                                }
-                                className={`min-w-0 flex-1 break-words rounded-sm text-left text-sm leading-snug outline-none hover:bg-secondary/40 focus-visible:ring-2 focus-visible:ring-ring/50 ${
+                              <div
+                                tabIndex={0}
+                                onClick={(event) => {
+                                  const target = event.target;
+                                  if (
+                                    target instanceof Element &&
+                                    target.closest("a")
+                                  ) {
+                                    return;
+                                  }
+                                  const selection = window.getSelection();
+                                  if (selection && !selection.isCollapsed) return;
+                                  beginEditRoutine(day.key, item);
+                                }}
+                                onKeyDown={(event) => {
+                                  if (event.target !== event.currentTarget) return;
+                                  if (event.key !== "Enter" && event.key !== " ") return;
+                                  event.preventDefault();
+                                  beginEditRoutine(day.key, item);
+                                }}
+                                className={`min-w-0 flex-1 cursor-text break-words rounded-sm text-left text-sm leading-snug outline-none hover:bg-secondary/40 focus-visible:ring-2 focus-visible:ring-ring/50 ${
                                   item.done ? "line-through" : ""
                                 }`}
                               >
@@ -2416,13 +2566,16 @@ export function WeeklyStrategyBoard() {
                                   dimmed={item.done}
                                   separator={Boolean(item.text)}
                                 />
-                                <TaskRichText
+                                <BoxText
                                   text={item.text}
                                   dimmed={item.done}
+                                  onChange={(text) =>
+                                    setOwnedBoxText(day.key, row, text)
+                                  }
                                 />
                                 {timeSubtitle}
                                 {carryFromNote(row)}
-                              </button>
+                              </div>
                             ) : (
                               <span
                                 className={`min-w-0 flex-1 text-sm leading-snug ${
@@ -2434,9 +2587,12 @@ export function WeeklyStrategyBoard() {
                                   dimmed={item.done}
                                   separator={Boolean(item.text)}
                                 />
-                                <TaskRichText
+                                <BoxText
                                   text={item.text}
                                   dimmed={item.done}
+                                  onChange={(text) =>
+                                    setOwnedBoxText(day.key, row, text)
+                                  }
                                 />
                                 {timeSubtitle}
                                 {carryFromNote(row)}
@@ -2467,14 +2623,14 @@ export function WeeklyStrategyBoard() {
 
                       const task = row.item;
                       return (
-                        <BoardRowLi key={rowId} {...rowShell}>
+                        <BoardRowLi key={rowId} {...rowShellWithSubs}>
                           <Checkbox
                             checked={task.done}
                             onCheckedChange={() =>
                               toggleBoardRow(day.key, row)
                             }
                             className="mt-0.5"
-                            aria-label={`Mark ${taskBodyText(task)} complete`}
+                            aria-label={`Mark ${visibleTaskText(taskBodyText(task))} complete`}
                           />
                           {editingTask?.day === day.key &&
                           editingTask.id === task.id &&
@@ -2574,6 +2730,14 @@ export function WeeklyStrategyBoard() {
                                   ) {
                                     return;
                                   }
+                                  if (e.key === "Enter" && e.shiftKey) {
+                                    e.preventDefault();
+                                    const week = editingTask.sourceWeekOf ?? weekOf;
+                                    const id = editingTask.id;
+                                    commitEditTask();
+                                    addSubBox(week, id, "");
+                                    return;
+                                  }
                                   if (e.key === "Enter") {
                                     e.preventDefault();
                                     commitEditTask();
@@ -2599,12 +2763,29 @@ export function WeeklyStrategyBoard() {
                               />
                             </div>
                           ) : (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                beginEditTask(day.key, task, row.carry)
-                              }
-                              className={`min-w-0 flex-1 break-words rounded-sm text-left text-sm leading-snug outline-none hover:bg-secondary/40 focus-visible:ring-2 focus-visible:ring-ring/50 ${
+                            <div
+                              tabIndex={0}
+                              onClick={(event) => {
+                                const target = event.target;
+                                if (
+                                  target instanceof Element &&
+                                  target.closest("a")
+                                ) {
+                                  return;
+                                }
+                                const selection = window.getSelection();
+                                if (selection && !selection.isCollapsed) return;
+                                beginEditTask(day.key, task, row.carry);
+                              }}
+                              onKeyDown={(event) => {
+                                if (event.target !== event.currentTarget) return;
+                                if (event.key !== "Enter" && event.key !== " ") {
+                                  return;
+                                }
+                                event.preventDefault();
+                                beginEditTask(day.key, task, row.carry);
+                              }}
+                              className={`min-w-0 flex-1 cursor-text break-words rounded-sm text-left text-sm leading-snug outline-none hover:bg-secondary/40 focus-visible:ring-2 focus-visible:ring-ring/50 ${
                                 task.done ? "line-through" : ""
                               }`}
                             >
@@ -2613,9 +2794,12 @@ export function WeeklyStrategyBoard() {
                                 dimmed={task.done}
                                 separator={Boolean(taskBodyText(task))}
                               />
-                              <TaskRichText
+                              <BoxText
                                 text={taskBodyText(task)}
                                 dimmed={task.done}
+                                onChange={(text) =>
+                                  setOwnedBoxText(day.key, row, text)
+                                }
                               />
                               {task.startTime ? (
                                 <span className="ml-1.5 text-xs text-muted-foreground">
@@ -2623,7 +2807,7 @@ export function WeeklyStrategyBoard() {
                                 </span>
                               ) : null}
                               {carryFromNote(row)}
-                            </button>
+                            </div>
                           )}
                           <TaskEstimateInput
                             minutes={estimateMinutesFor(row)}
@@ -2704,12 +2888,18 @@ export function WeeklyStrategyBoard() {
                       ) {
                         return;
                       }
+                      if (e.key === "Enter" && e.shiftKey) {
+                        e.preventDefault();
+                        addDraftSubBox(day.key);
+                        return;
+                      }
                       if (e.key === "Enter") {
                         e.preventDefault();
                         addTask(day.key);
                       }
                     }}
                     placeholder="Add box"
+                    title="Shift+Enter adds a sub-box under the last box"
                     className="h-8 min-w-0 flex-1 basis-28 bg-white/80"
                   />
                   {draftTimes[day.key] ? (
@@ -2815,6 +3005,9 @@ export function WeeklyStrategyBoard() {
                     : row.kind === "cs"
                       ? row.item.dueNote
                       : null;
+                const missedId = boardRowId(row);
+                const missedSubs = subboxesFor(row, missedWeek);
+                const missedSubsOpen = openSubs[missedId] === true;
                 return (
                   <li
                     key={key}
@@ -2823,6 +3016,16 @@ export function WeeklyStrategyBoard() {
                     }
                     className="flex items-start gap-3 rounded-xl border border-border/70 bg-white/65 px-4 py-3 backdrop-blur-sm"
                   >
+                    <SubBoxToggle
+                      count={missedSubs.length}
+                      open={missedSubsOpen}
+                      onToggle={() =>
+                        setOpenSubs((cur) => ({
+                          ...cur,
+                          [missedId]: cur[missedId] !== true,
+                        }))
+                      }
+                    />
                     <Checkbox
                       checked={false}
                       onCheckedChange={() =>
@@ -2849,6 +3052,28 @@ export function WeeklyStrategyBoard() {
                           </span>
                         ) : null}
                       </p>
+                      {missedSubsOpen && missedSubs.length > 0 ? (
+                        <div className="mt-1 ml-1 border-l border-seafoam/40 pl-2.5">
+                          <SubBoxList
+                            items={missedSubs}
+                            onChange={(next) =>
+                              setRowSubboxes(row, day, next, missedWeek)
+                            }
+                            pendingEditId={
+                              subFocus?.rowId === missedId
+                                ? (subFocus.editId ?? null)
+                                : null
+                            }
+                            onPendingHandled={() =>
+                              setSubFocus((cur) =>
+                                cur?.rowId === missedId
+                                  ? { rowId: cur.rowId }
+                                  : cur,
+                              )
+                            }
+                          />
+                        </div>
+                      ) : null}
                     </div>
                     {(() => {
                       const entry = { weekOf: missedWeek, day, row };
@@ -2912,6 +3137,9 @@ export function WeeklyStrategyBoard() {
           }
           onTags={(tags) =>
             setRowTags(menuRow, boxMenu.viewDay, tags, boxMenu.viewWeek)
+          }
+          onAddSubBox={() =>
+            addSubBox(boxMenu.viewWeek, boardRowId(menuRow), "")
           }
           onClose={closeBoxMenu}
         />
