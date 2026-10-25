@@ -90,7 +90,7 @@ export function BoxContextMenu({
 
   useEffect(() => {
     function onClick(event: MouseEvent) {
-      if (rootRef.current?.contains(event.target as Node)) return;
+      if (eventInsideMenu(event, rootRef.current)) return;
       onCloseRef.current();
     }
     function onKey(event: KeyboardEvent) {
@@ -104,7 +104,7 @@ export function BoxContextMenu({
     }
     function onScroll(event: Event) {
       if (performance.now() < ignoreScrollUntilRef.current) return;
-      if (rootRef.current?.contains(event.target as Node)) return;
+      if (eventInsideMenu(event, rootRef.current)) return;
       if (rootRef.current?.contains(document.activeElement)) return;
       onCloseRef.current();
     }
@@ -128,6 +128,7 @@ export function BoxContextMenu({
       aria-label="Box actions"
       data-box-menu
       onMouseDown={holdThroughScroll}
+      onClick={(event) => event.stopPropagation()}
       onContextMenu={(event) => event.preventDefault()}
       className="fixed z-[80] w-52 rounded-xl border border-border/80 bg-white p-1.5 shadow-lg"
       style={{
@@ -256,6 +257,14 @@ export function BoxContextMenu({
 
   if (typeof document === "undefined") return null;
   return createPortal(menu, document.body);
+}
+
+/** True when the event started in the menu, even if that node has since unmounted. */
+function eventInsideMenu(event: Event, root: HTMLElement | null) {
+  if (!root) return false;
+  const target = event.target;
+  if (target instanceof Node && root.contains(target)) return true;
+  return event.composedPath().includes(root);
 }
 
 function MenuItem({
