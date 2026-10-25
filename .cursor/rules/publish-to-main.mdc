@@ -1,0 +1,14 @@
+---
+description: After a finished change, commit and push main so the friend site deploys
+alwaysApply: true
+---
+
+# Publish finished work to the website
+
+When a requested change in this repo is finished, put it on `main` and push `origin` so the friend site updates. Do this without waiting for a separate commit or push request.
+
+The site deploys on every push to `main` (`.github/workflows/deploy-friend-site.yml`, Firebase Hosting).
+
+- Already on `main`: commit the finished change, then `git push origin main`.
+- On another branch: merge that branch into `main`, then push `origin`. Use a normal merge. Do not force-push.
+- Skip this when the user says not to publish, the change is still incomplete, or the commit would include secrets (`.env`, credentials, service accounts).

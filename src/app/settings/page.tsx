@@ -1,6 +1,7 @@
 import type { ComponentType } from "react";
 import { AppNav } from "@/components/app-nav";
 import { SettingsIntro, SiteFooter } from "@/components/profile-copy";
+import { CalendarSettingsPanel } from "@/components/calendar-settings-panel";
 import { TagSettingsPanel } from "@/components/tag-settings-panel";
 
 function NoCloudAccount() {
@@ -41,7 +42,8 @@ export default function SettingsPage() {
 
         {process.env.NEXT_PUBLIC_APP_PROFILE === "blank" ? <BlankAccountPanel /> : null}
 
-        <div className="mt-6">
+        <div className="mt-6 space-y-8">
+          <CalendarSettingsPanel />
           <TagSettingsPanel />
         </div>
       </main>

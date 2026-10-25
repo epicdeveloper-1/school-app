@@ -17,6 +17,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { BoxTagPicker, TaskTagPrefixes } from "@/components/box-tag-picker";
 import { useTags } from "@/components/tags-provider";
 import { BoxTag, normalizeTaskTags } from "@/lib/box-tags";
+import {
+  DEFAULT_CALENDAR_WEEK_START,
+  calendarWeekdayHeaders,
+  loadCalendarWeekStart,
+  subscribeCalendarWeekStart,
+} from "@/lib/calendar-week-start";
 import { DAYS, DayKey, createId } from "@/lib/week-plan";
 import {
   BoardPlacementRelative,
@@ -51,8 +57,6 @@ import {
   formatDuration,
   parseDuration,
 } from "@/lib/task-time";
-
-const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 type DraftOccurrence = {
   /** Client-only key for list editing. */
@@ -315,6 +319,9 @@ export function DueCalendar() {
   const [courseFilter, setCourseFilter] = useState<DueCourse[]>([]);
   const [kindFilter, setKindFilter] = useState<EventKindFilter>("all");
   const [listView, setListView] = useState(false);
+  const [weekStartsOn, setWeekStartsOn] = useState<DayKey>(
+    DEFAULT_CALENDAR_WEEK_START,
+  );
 
   useEffect(() => {
     setCourseFilter((current) =>
@@ -362,8 +369,29 @@ export function DueCalendar() {
     setDeepLinkHandled(true);
   }, [ready, events, deepLinkHandled]);
 
+  useEffect(() => {
+    let cancelled = false;
+    void loadCalendarWeekStart().then((day) => {
+      if (!cancelled) setWeekStartsOn(day);
+    });
+    const unsubscribe = subscribeCalendarWeekStart((day) => {
+      if (!cancelled) setWeekStartsOn(day);
+    });
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, []);
+
   const instances = useMemo(() => expandEventInstances(events), [events]);
-  const cells = useMemo(() => monthGridDays(monthKey), [monthKey]);
+  const cells = useMemo(
+    () => monthGridDays(monthKey, weekStartsOn),
+    [monthKey, weekStartsOn],
+  );
+  const weekdayHeaders = useMemo(
+    () => calendarWeekdayHeaders(weekStartsOn),
+    [weekStartsOn],
+  );
   const weekRows = useMemo(() => {
     const rows: { date: string; inMonth: boolean }[][] = [];
     for (let i = 0; i < cells.length; i += 7) {
@@ -962,12 +990,12 @@ export function DueCalendar() {
         ) : (
           <div className="animate-rise rounded-2xl border border-border/70 bg-white/65 p-3 backdrop-blur-sm sm:p-4">
           <div className="mb-1 grid grid-cols-7 gap-px">
-            {WEEKDAYS.map((d) => (
+            {weekdayHeaders.map((day) => (
               <div
-                key={d}
+                key={day.key}
                 className="py-1 text-center text-xs font-semibold tracking-wider text-muted-foreground uppercase"
               >
-                {d}
+                {day.short}
               </div>
             ))}
           </div>

@@ -1,6 +1,7 @@
 import { readStorage, writeStorage } from "./storage";
 import type { BoxTag } from "./box-tags";
 import { boxTagMeta, getBoxTags, normalizeTaskTags } from "./box-tags";
+import { startOfCalendarWeek } from "./calendar-week-start";
 import {
   DayKey,
   DAYS,
@@ -741,7 +742,7 @@ export function eventsForWeek(
 }
 
 /**
- * Layout multi-day events as continuous bars across Mon–Sun week rows.
+ * Layout multi-day events as continuous bars across calendar week rows.
  * Single-day instances are omitted (rendered as day-cell dots instead).
  */
 export function layoutMonthSpanSegments(
@@ -1083,14 +1084,20 @@ export function formatMonthLabel(monthKey: string): string {
   return d.toLocaleDateString("en-US", { month: "long", year: "numeric" });
 }
 
-/** Mon-start calendar cells for a YYYY-MM month (includes leading/trailing days). */
-export function monthGridDays(monthKey: string): {
+/**
+ * Calendar cells for a YYYY-MM month (includes leading/trailing days).
+ * `weekStartsOn` only shifts the grid. Board weeks stay Monday via `startOfWeek`.
+ */
+export function monthGridDays(
+  monthKey: string,
+  weekStartsOn: DayKey = "monday",
+): {
   date: string;
   inMonth: boolean;
 }[] {
   const [y, m] = monthKey.split("-").map(Number);
   const first = new Date(y, m - 1, 1, 12, 0, 0);
-  const gridStart = startOfWeek(first);
+  const gridStart = startOfCalendarWeek(first, weekStartsOn);
   const cells: { date: string; inMonth: boolean }[] = [];
   for (let i = 0; i < 42; i++) {
     const d = new Date(gridStart);
