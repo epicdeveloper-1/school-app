@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronLeft,
   ChevronRight,
@@ -12,6 +12,7 @@ import {
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { DateInput } from "@/components/ui/date-input";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { BoxTagPicker, TaskTagPrefixes } from "@/components/box-tag-picker";
@@ -31,6 +32,8 @@ import {
   DueEvent,
   DueEventInstance,
   OTHER_COURSE,
+  CalendarCourseUndo,
+  applyCalendarCourseFromSpace,
   deleteDueEvent,
   dueCourseColor,
   eventCoversDate,
@@ -322,6 +325,11 @@ export function DueCalendar() {
   const [weekStartsOn, setWeekStartsOn] = useState<DayKey>(
     DEFAULT_CALENDAR_WEEK_START,
   );
+  const courseTagUndoRef = useRef<CalendarCourseUndo | null>(null);
+  const draftKey = draft ? (draft.id ?? `new:${draft.date}`) : "";
+  useEffect(() => {
+    courseTagUndoRef.current = null;
+  }, [draftKey]);
 
   useEffect(() => {
     setCourseFilter((current) =>
@@ -565,6 +573,7 @@ export function DueCalendar() {
   }
 
   function openNew() {
+    courseTagUndoRef.current = null;
     setDraft(emptyDraft(selectedDate));
   }
 
@@ -1139,9 +1148,83 @@ export function DueCalendar() {
                   <span className="mb-1 block font-medium text-ink">Title</span>
                   <Input
                     value={draft.title}
-                    onChange={(e) =>
-                      setDraft((d) => (d ? { ...d, title: e.target.value } : d))
-                    }
+                    onChange={(e) => {
+                      courseTagUndoRef.current = null;
+                      setDraft((d) => (d ? { ...d, title: e.target.value } : d));
+                    }}
+                    onKeyDown={(e) => {
+                      const value = draft.title;
+                      const input = e.currentTarget;
+                      const start = input.selectionStart ?? value.length;
+                      const end = input.selectionEnd ?? start;
+
+                      if (
+                        e.key === " " &&
+                        !e.ctrlKey &&
+                        !e.metaKey &&
+                        !e.altKey
+                      ) {
+                        if (start !== end) {
+                          courseTagUndoRef.current = null;
+                          return;
+                        }
+                        const applied = applyCalendarCourseFromSpace(
+                          value,
+                          start,
+                          draft.course,
+                        );
+                        if (!applied) {
+                          courseTagUndoRef.current = null;
+                          return;
+                        }
+                        e.preventDefault();
+                        courseTagUndoRef.current = applied.undo;
+                        setDraft((d) =>
+                          d
+                            ? {
+                                ...d,
+                                title: applied.title,
+                                course: applied.course,
+                              }
+                            : d,
+                        );
+                        requestAnimationFrame(() => {
+                          input.focus();
+                          input.setSelectionRange(applied.cursor, applied.cursor);
+                        });
+                        return;
+                      }
+
+                      if (
+                        e.key === "Backspace" &&
+                        !e.ctrlKey &&
+                        !e.metaKey &&
+                        !e.altKey &&
+                        courseTagUndoRef.current
+                      ) {
+                        const undo = courseTagUndoRef.current;
+                        e.preventDefault();
+                        courseTagUndoRef.current = null;
+                        setDraft((d) =>
+                          d
+                            ? { ...d, title: undo.title, course: undo.course }
+                            : d,
+                        );
+                        requestAnimationFrame(() => {
+                          input.focus();
+                          input.setSelectionRange(undo.cursor, undo.cursor);
+                        });
+                        return;
+                      }
+
+                      if (
+                        e.key.length === 1 ||
+                        e.key === "Delete" ||
+                        e.key === "Enter"
+                      ) {
+                        courseTagUndoRef.current = null;
+                      }
+                    }}
                     placeholder={
                       process.env.NEXT_PUBLIC_APP_PROFILE === "blank"
                         ? "e.g. Essay draft"
@@ -1155,13 +1238,11 @@ export function DueCalendar() {
                   <span className="mb-1 block font-medium text-ink">
                     {draft.weekly || draft.custom ? "Starts on" : "Date"}
                   </span>
-                  <Input
-                    type="date"
+                  <DateInput
                     value={draft.date}
-                    onChange={(e) =>
+                    onChange={(date) =>
                       setDraft((d) => {
                         if (!d) return d;
-                        const date = e.target.value;
                         const endDate =
                           d.endDate && d.endDate < date ? "" : d.endDate;
                         return { ...d, date, endDate };
@@ -1177,14 +1258,11 @@ export function DueCalendar() {
                       (optional, multi-day)
                     </span>
                   </span>
-                  <Input
-                    type="date"
+                  <DateInput
                     value={draft.endDate}
                     min={draft.date}
-                    onChange={(e) =>
-                      setDraft((d) =>
-                        d ? { ...d, endDate: e.target.value } : d,
-                      )
+                    onChange={(endDate) =>
+                      setDraft((d) => (d ? { ...d, endDate } : d))
                     }
                     className="bg-white/80"
                   />
@@ -1199,16 +1277,18 @@ export function DueCalendar() {
                   ) : null}
                 </label>
                 <label className="block text-sm">
-                  <span className="mb-1 block font-medium text-ink">Course</span>
+                  <span className="mb-1 block font-medium text-ink">Tag</span>
                   <select
                     value={draft.course}
-                    onChange={(e) =>
+                    aria-label="Tag"
+                    onChange={(e) => {
+                      courseTagUndoRef.current = null;
                       setDraft((d) =>
                         d
                           ? { ...d, course: e.target.value as DueCourse }
                           : d,
-                      )
-                    }
+                      );
+                    }}
                     className="h-8 w-full rounded-lg border border-input bg-white/80 px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
                   >
                     {(courses.includes(draft.course)
@@ -1310,13 +1390,10 @@ export function DueCalendar() {
                         <span className="mb-1 block text-muted-foreground">
                           Until (optional)
                         </span>
-                        <Input
-                          type="date"
+                        <DateInput
                           value={draft.until}
-                          onChange={(e) =>
-                            setDraft((d) =>
-                              d ? { ...d, until: e.target.value } : d,
-                            )
+                          onChange={(until) =>
+                            setDraft((d) => (d ? { ...d, until } : d))
                           }
                           className="bg-white/80"
                         />
@@ -1380,11 +1457,9 @@ export function DueCalendar() {
                                 Date
                                 {isOpen ? " · this one" : ""}
                               </span>
-                              <Input
-                                type="date"
+                              <DateInput
                                 value={slot.date}
-                                onChange={(e) => {
-                                  const date = e.target.value;
+                                onChange={(date) => {
                                   setDraft((d) =>
                                     d
                                       ? {

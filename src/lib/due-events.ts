@@ -1,6 +1,11 @@
 import { readStorage, writeStorage } from "./storage";
 import type { BoxTag } from "./box-tags";
-import { boxTagMeta, getBoxTags, normalizeTaskTags } from "./box-tags";
+import {
+  boxTagMeta,
+  getBoxTags,
+  matchTrailingTagLabel,
+  normalizeTaskTags,
+} from "./box-tags";
 import { startOfCalendarWeek } from "./calendar-week-start";
 import {
   DayKey,
@@ -165,6 +170,52 @@ export function tagForDueCourse(course: DueCourse): BoxTag | undefined {
     (t) => t.id !== "optional" && t.label === course,
   );
   return match?.id;
+}
+
+/** Snapshot so Backspace can restore a title after space→tag conversion. */
+export type CalendarCourseUndo = {
+  title: string;
+  course: DueCourse;
+  cursor: number;
+};
+
+/**
+ * Space in an event title selects the matching tag and removes that label.
+ * Returns null when the token is not a tag, or that tag is already selected
+ * (so the word stays in the title).
+ */
+export function applyCalendarCourseFromSpace(
+  title: string,
+  cursor: number,
+  course: DueCourse,
+): {
+  title: string;
+  course: DueCourse;
+  cursor: number;
+  undo: CalendarCourseUndo;
+} | null {
+  const before = title.slice(0, cursor);
+  const after = title.slice(cursor);
+  const match = matchTrailingTagLabel(before);
+  if (!match || match.tag === "optional") return null;
+  const label = boxTagMeta(match.tag).label;
+  if (!label || course === label) return null;
+
+  const nextTitle =
+    match.textWithoutMatch.length > 0 && after.length > 0
+      ? `${match.textWithoutMatch} ${after.replace(/^\s+/, "")}`
+      : match.textWithoutMatch + after.replace(/^\s+/, "");
+
+  return {
+    title: nextTitle,
+    course: label,
+    cursor: match.textWithoutMatch.length,
+    undo: {
+      title: `${before} ${after}`,
+      course,
+      cursor: before.length + 1,
+    },
+  };
 }
 
 export function dueCourseColor(course: DueCourse): string {
