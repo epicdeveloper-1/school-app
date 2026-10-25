@@ -21,8 +21,8 @@ export type FirebaseWebConfig = {
   appId: string;
 };
 
-function envValue(name: string): string {
-  return (process.env[name] ?? "").trim().replace(/^["']+|["']+$/g, "").trim();
+function clean(value: string | undefined): string {
+  return (value ?? "").trim().replace(/^["']+|["']+$/g, "").trim();
 }
 
 /** Keep Google's return trip on this site. A firebaseapp.com domain is a different site, so the account never arrives. */
@@ -34,10 +34,10 @@ function hostingAuthDomain(fallback: string): string {
 }
 
 export function firebaseWebConfig(): FirebaseWebConfig | null {
-  const apiKey = envValue("NEXT_PUBLIC_FIREBASE_API_KEY");
-  const authDomain = hostingAuthDomain(envValue("NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN"));
-  const projectId = envValue("NEXT_PUBLIC_FIREBASE_PROJECT_ID");
-  const appId = envValue("NEXT_PUBLIC_FIREBASE_APP_ID");
+  const apiKey = clean(process.env.NEXT_PUBLIC_FIREBASE_API_KEY);
+  const authDomain = hostingAuthDomain(clean(process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN));
+  const projectId = clean(process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID);
+  const appId = clean(process.env.NEXT_PUBLIC_FIREBASE_APP_ID);
   if (!apiKey || !authDomain || !projectId || !appId) return null;
   return { apiKey, authDomain, projectId, appId };
 }
