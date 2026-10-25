@@ -3,13 +3,16 @@
 import { useEffect, useState, type ReactNode } from "react";
 import {
   GoogleAuthProvider,
-  getRedirectResult,
   onAuthStateChanged,
   signInWithRedirect,
   type User,
 } from "firebase/auth";
 import { Button } from "@/components/ui/button";
-import { getFirebaseAuth, isFirebaseConfigured } from "@/lib/firebase-client";
+import {
+  getFirebaseAuth,
+  isFirebaseConfigured,
+  takeRedirectResult,
+} from "@/lib/firebase-client";
 
 function StatusScreen({
   title,
@@ -50,26 +53,26 @@ function authErrorMessage(error: unknown): string {
 function WebSignIn({ children }: { children: ReactNode }) {
   const configured = isFirebaseConfigured();
   const [user, setUser] = useState<User | null | undefined>(configured ? undefined : null);
+  const [redirectChecked, setRedirectChecked] = useState(!configured);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     if (!configured) return;
     const auth = getFirebaseAuth();
-    let unsubscribe = () => {};
-    let cancelled = false;
-    void getRedirectResult(auth)
+    let active = true;
+    const unsubscribe = onAuthStateChanged(auth, (next) => {
+      if (active) setUser(next);
+    });
+    void takeRedirectResult(auth)
       .catch((err: unknown) => {
-        if (!cancelled) setError(authErrorMessage(err));
+        if (active) setError(authErrorMessage(err));
       })
       .finally(() => {
-        if (cancelled) return;
-        unsubscribe = onAuthStateChanged(auth, (next) => {
-          setUser(next);
-        });
+        if (active) setRedirectChecked(true);
       });
     return () => {
-      cancelled = true;
+      active = false;
       unsubscribe();
     };
   }, [configured]);
@@ -83,7 +86,11 @@ function WebSignIn({ children }: { children: ReactNode }) {
     );
   }
 
-  if (user === undefined) {
+  if (user) {
+    return children;
+  }
+
+  if (!redirectChecked || user === undefined) {
     return (
       <StatusScreen
         title="Weekly Strategy"
@@ -92,12 +99,11 @@ function WebSignIn({ children }: { children: ReactNode }) {
     );
   }
 
-  if (!user) {
-    return (
-      <div className="app-shell relative flex min-h-full flex-1 items-center justify-center px-4 py-16">
-        <div className="grid-texture pointer-events-none absolute inset-0 opacity-60" />
-        <div className="pointer-events-none absolute -top-24 right-0 h-72 w-72 max-w-[50vw] rounded-full bg-seafoam/20 blur-3xl" />
-        <div className="relative z-10 w-full max-w-md text-center">
+  return (
+    <div className="app-shell relative flex min-h-full flex-1 items-center justify-center px-4 py-16">
+      <div className="grid-texture pointer-events-none absolute inset-0 opacity-60" />
+      <div className="pointer-events-none absolute -top-24 right-0 h-72 w-72 max-w-[50vw] rounded-full bg-seafoam/20 blur-3xl" />
+      <div className="relative z-10 w-full max-w-md text-center">
           <p className="text-sm font-medium tracking-[0.2em] text-seafoam uppercase">
             Weekly Strategy
           </p>
@@ -127,11 +133,8 @@ function WebSignIn({ children }: { children: ReactNode }) {
             {busy ? "Redirecting to Google…" : "Continue with Google"}
           </Button>
         </div>
-      </div>
-    );
-  }
-
-  return children;
+    </div>
+  );
 }
 
 /**
