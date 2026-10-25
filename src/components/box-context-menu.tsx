@@ -64,7 +64,13 @@ export function BoxContextMenu({
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
   const skipCommitRef = useRef(false);
   const onCloseRef = useRef(onClose);
+  /** Focus and panel growth can scroll the page; that must not dismiss. */
+  const ignoreScrollUntilRef = useRef(0);
   onCloseRef.current = onClose;
+
+  function holdThroughScroll() {
+    ignoreScrollUntilRef.current = performance.now() + 400;
+  }
 
   useLayoutEffect(() => {
     const el = rootRef.current;
@@ -97,7 +103,9 @@ export function BoxContextMenu({
       onCloseRef.current();
     }
     function onScroll(event: Event) {
+      if (performance.now() < ignoreScrollUntilRef.current) return;
       if (rootRef.current?.contains(event.target as Node)) return;
+      if (rootRef.current?.contains(document.activeElement)) return;
       onCloseRef.current();
     }
     document.addEventListener("click", onClick);
@@ -119,6 +127,7 @@ export function BoxContextMenu({
       role="menu"
       aria-label="Box actions"
       data-box-menu
+      onMouseDown={holdThroughScroll}
       onContextMenu={(event) => event.preventDefault()}
       className="fixed z-[80] w-52 rounded-xl border border-border/80 bg-white p-1.5 shadow-lg"
       style={{
@@ -133,6 +142,7 @@ export function BoxContextMenu({
             icon={<Hourglass className="size-3.5" />}
             label={hasDuration ? "Edit duration" : "Add duration"}
             onClick={() => {
+              holdThroughScroll();
               skipCommitRef.current = false;
               setPanel("duration");
             }}
@@ -142,6 +152,7 @@ export function BoxContextMenu({
               icon={<Clock className="size-3.5" />}
               label={hasTime ? "Edit time" : "Add time"}
               onClick={() => {
+                holdThroughScroll();
                 skipCommitRef.current = false;
                 setPanel("time");
               }}
@@ -151,7 +162,10 @@ export function BoxContextMenu({
             <MenuItem
               icon={<Tags className="size-3.5" />}
               label="Edit tags"
-              onClick={() => setPanel("tags")}
+              onClick={() => {
+                holdThroughScroll();
+                setPanel("tags");
+              }}
             />
           )}
         </>
@@ -257,6 +271,7 @@ function MenuItem({
     <button
       type="button"
       role="menuitem"
+      onMouseDown={(event) => event.preventDefault()}
       onClick={onClick}
       className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-ink hover:bg-secondary/70"
     >
@@ -289,6 +304,14 @@ function ValueField({
   const [draft, setDraft] = useState(initial);
   const [error, setError] = useState(false);
   const doneRef = useRef(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useLayoutEffect(() => {
+    const input = inputRef.current;
+    if (!input) return;
+    input.focus({ preventScroll: true });
+    input.select();
+  }, []);
 
   function commit() {
     if (doneRef.current || skipCommitRef.current) return;
@@ -303,7 +326,7 @@ function ValueField({
         {label}
       </span>
       <Input
-        autoFocus
+        ref={inputRef}
         value={draft}
         aria-label={label}
         placeholder={placeholder}
