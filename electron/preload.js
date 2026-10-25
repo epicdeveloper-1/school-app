@@ -1,7 +1,8 @@
-const { contextBridge } = require("electron");
+const { contextBridge, ipcRenderer } = require("electron");
 
-// Reserved for future native APIs (notifications, file save, etc.).
 contextBridge.exposeInMainWorld("weeklyStrategy", {
   platform: process.platform,
   isDesktop: true,
+  getItem: (key) => ipcRenderer.invoke("storage:get", key),
+  setItem: (key, value) => ipcRenderer.invoke("storage:set", key, value),
 });

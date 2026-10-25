@@ -1,0 +1,57 @@
+name: Deploy friend site
+
+on:
+  push:
+    branches: [main]
+
+# Publishes the blank static site only. It does not build Electron or edit
+# electron/app-profile.json. Skips until the Firebase secrets exist.
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      configured: ${{ steps.secrets.outputs.configured }}
+    steps:
+      - id: secrets
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}
+          NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ${{ secrets.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN }}
+          NEXT_PUBLIC_FIREBASE_PROJECT_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_PROJECT_ID }}
+          NEXT_PUBLIC_FIREBASE_APP_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_APP_ID }}
+        run: |
+          if [ -n "$FIREBASE_SERVICE_ACCOUNT" ] \
+            && [ -n "$NEXT_PUBLIC_FIREBASE_API_KEY" ] \
+            && [ -n "$NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN" ] \
+            && [ -n "$NEXT_PUBLIC_FIREBASE_PROJECT_ID" ] \
+            && [ -n "$NEXT_PUBLIC_FIREBASE_APP_ID" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "Firebase secrets are unset. Skipping the friend-site deploy."
+          fi
+
+  deploy:
+    needs: check
+    if: needs.check.outputs.configured == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build blank web app
+        run: npm run build
+        env:
+          NEXT_PUBLIC_APP_PROFILE: blank
+          NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}
+          NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ${{ secrets.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN }}
+          NEXT_PUBLIC_FIREBASE_PROJECT_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_PROJECT_ID }}
+          NEXT_PUBLIC_FIREBASE_APP_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_APP_ID }}
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+      - name: Deploy Hosting and Firestore rules
+        run: npx --yes firebase-tools@14 deploy --only hosting,firestore:rules --project "${{ secrets.NEXT_PUBLIC_FIREBASE_PROJECT_ID }}" --non-interactive

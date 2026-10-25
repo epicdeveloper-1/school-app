@@ -20,6 +20,7 @@
 # production
 /build
 /release
+/release-blank
 /dist
 
 # misc
@@ -34,6 +35,11 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
+
+# firebase
+/.firebase
+*-firebase-adminsdk-*.json
 
 # vercel
 .vercel

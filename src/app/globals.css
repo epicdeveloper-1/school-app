@@ -157,6 +157,7 @@
 }
 
 .app-shell {
+  overflow-x: hidden;
   background:
     radial-gradient(1200px 500px at 10% -10%, #c8ebe4 0%, transparent 55%),
     radial-gradient(900px 420px at 95% 5%, #f7e7a8 0%, transparent 45%),

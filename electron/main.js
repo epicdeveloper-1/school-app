@@ -1,15 +1,69 @@
-const { app, BrowserWindow } = require("electron");
+const { app, BrowserWindow, ipcMain } = require("electron");
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const { pathToFileURL } = require("url");
 
+function readAppProfile() {
+  const fallback = { profile: "personal", appName: "Weekly Strategy" };
+  try {
+    const profilePath = path.join(__dirname, "app-profile.json");
+    const parsed = JSON.parse(fs.readFileSync(profilePath, "utf8"));
+    if (!parsed || typeof parsed !== "object") return fallback;
+    return {
+      profile:
+        typeof parsed.profile === "string" ? parsed.profile : fallback.profile,
+      appName:
+        typeof parsed.appName === "string" && parsed.appName.trim()
+          ? parsed.appName.trim()
+          : fallback.appName,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+const appProfile = readAppProfile();
+if (appProfile.profile === "blank") {
+  app.setName(appProfile.appName);
+}
+
 const isDev = process.argv.includes("--dev");
+/** Fixed port for the packaged static server. */
+const STATIC_PORT = 43124;
 
 /** @type {BrowserWindow | null} */
 let mainWindow = null;
 /** @type {http.Server | null} */
 let staticServer = null;
+
+function storageFilePath(key) {
+  const safe = String(key).replace(/[^a-zA-Z0-9._-]/g, "_");
+  return path.join(app.getPath("userData"), "storage", `${safe}.json`);
+}
+
+ipcMain.handle("storage:get", (_event, key) => {
+  try {
+    const file = storageFilePath(key);
+    if (!fs.existsSync(file)) return null;
+    return fs.readFileSync(file, "utf8");
+  } catch (err) {
+    console.error("storage:get failed", err);
+    return null;
+  }
+});
+
+ipcMain.handle("storage:set", (_event, key, value) => {
+  try {
+    const file = storageFilePath(key);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, String(value), "utf8");
+    return true;
+  } catch (err) {
+    console.error("storage:set failed", err);
+    return false;
+  }
+});
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -85,24 +139,21 @@ function startStaticServer(rootDir) {
     });
 
     server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      if (!address || typeof address === "string") {
-        reject(new Error("Failed to bind static server"));
-        return;
-      }
-      resolve({ server, port: address.port });
+    server.listen(STATIC_PORT, "127.0.0.1", () => {
+      resolve({ server, port: STATIC_PORT });
     });
   });
 }
 
 async function createWindow() {
+  const iconPath = path.join(__dirname, "icon.ico");
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 850,
     minWidth: 900,
     minHeight: 600,
-    title: "Weekly Strategy",
+    title: appProfile.appName,
+    icon: fs.existsSync(iconPath) ? iconPath : undefined,
     show: false,
     autoHideMenuBar: true,
     webPreferences: {

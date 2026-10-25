@@ -1,0 +1,32 @@
+{
+  "appId": "com.epicdeveloper.weeklystrategy.blank",
+  "productName": "Weekly Strategy Blank",
+  "extraMetadata": {
+    "name": "weekly-strategy-blank",
+    "productName": "Weekly Strategy Blank"
+  },
+  "directories": {
+    "output": "release-blank",
+    "buildResources": "build"
+  },
+  "icon": "build/icon.ico",
+  "files": [
+    "out/**/*",
+    "electron/**/*",
+    "package.json"
+  ],
+  "win": {
+    "icon": "build/icon.ico",
+    "target": [
+      "nsis"
+    ]
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "shortcutName": "Weekly Strategy Blank",
+    "installerIcon": "build/icon.ico",
+    "uninstallerIcon": "build/icon.ico",
+    "installerHeaderIcon": "build/icon.ico"
+  }
+}

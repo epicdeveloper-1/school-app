@@ -13,12 +13,14 @@
     "electron": "electron .",
     "electron:dev": "electron . --dev",
     "electron:build": "next build && electron .",
-    "dist": "next build && electron-builder"
+    "dist": "next build && electron-builder",
+    "dist:blank": "node scripts/dist-blank.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
     "class-variance-authority": "^0.7.1",
     "cn": "^0.2.6",
+    "firebase": "^13.1.0",
     "lucide-react": "^1.44.0",
     "next": "16.3.4",
     "react": "19.2.8",
@@ -42,14 +44,17 @@
     "appId": "com.epicdeveloper.weeklystrategy",
     "productName": "Weekly Strategy",
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "build"
     },
+    "icon": "build/icon.ico",
     "files": [
       "out/**/*",
       "electron/**/*",
       "package.json"
     ],
     "win": {
+      "icon": "build/icon.ico",
       "target": [
         "nsis"
       ]
@@ -57,7 +62,10 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "shortcutName": "Weekly Strategy"
+      "shortcutName": "Weekly Strategy",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico"
     }
   }
 }

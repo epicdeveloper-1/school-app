@@ -1,0 +1,26 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Each Google user can read and write only their own planner blobs.
+    // When his Gmail is known, also require:
+    // && request.auth.token.email == 'friend@gmail.com'
+    match /users/{userId}/blobs/{blobId} {
+      allow read: if request.auth != null && request.auth.uid == userId;
+
+      allow create, update: if request.auth != null
+        && request.auth.uid == userId
+        && blobId.matches('^[A-Za-z0-9._-]{1,700}$')
+        && request.resource.data.keys().hasOnly(['value', 'updatedAt'])
+        && request.resource.data.value is string
+        && request.resource.data.value.size() < 900000
+        && request.resource.data.updatedAt == request.time;
+
+      allow delete: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
