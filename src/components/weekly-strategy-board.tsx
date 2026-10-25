@@ -2,11 +2,13 @@
 
 import Link from "next/link";
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
   type Dispatch,
+  type MouseEvent as ReactMouseEvent,
   type KeyboardEvent,
   type ReactNode,
   type SetStateAction,
@@ -22,6 +24,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { BoxTagPicker, TaskTagPrefixes } from "@/components/box-tag-picker";
+import { BoxContextMenu, DismissBoxMenu } from "@/components/box-context-menu";
 import {
   DropIndicator,
   ReorderRow,
@@ -88,6 +91,7 @@ import {
   overlayBoxesForWeek,
   peekBoxDone,
   peekDueEvents,
+  saveDueEvent,
   subscribeDueEvents,
   todayDateString,
   toggleEventBox,
@@ -114,6 +118,7 @@ import {
   reminderEstimateKey,
   subscribeReminders,
   toggleReminder,
+  updateReminder,
 } from "@/lib/reminders";
 import { WeeklyRoutinesPanel } from "@/components/weekly-routines-panel";
 import { isBlankProfile } from "@/lib/app-profile";
@@ -300,6 +305,49 @@ function boardRowLabel(row: DayBoardRow): string {
     case "task":
       return taskBodyText(row.item);
   }
+}
+
+function boxActionState(row: DayBoardRow): {
+  canTime: boolean;
+  canTags: boolean;
+  time: BoardTimeRange | null;
+  tags: BoxTag[];
+  scopeNote?: string;
+} {
+  if (row.kind === "task") {
+    return {
+      canTime: true,
+      canTags: true,
+      time: timeFromClock(row.item.startTime, row.item.endTime),
+      tags: normalizeTaskTags(row.item.tags),
+    };
+  }
+  if (row.kind === "routine") {
+    return {
+      canTime: true,
+      canTags: true,
+      time: timeFromClock(row.item.startTime, row.item.endTime),
+      tags: normalizeTaskTags(row.item.tags),
+    };
+  }
+  if (row.kind === "reminder") {
+    return {
+      canTime: false,
+      canTags: true,
+      time: null,
+      tags: normalizeTaskTags(row.item.tags),
+    };
+  }
+  if (row.kind === "event") {
+    return {
+      canTime: true,
+      canTags: row.item.sourceRuleId !== "appear",
+      time: timeFromClock(row.item.startTime, row.item.endTime),
+      tags: normalizeTaskTags(row.item.tags),
+      scopeNote: "Saves on the calendar box for every week.",
+    };
+  }
+  return { canTime: false, canTags: false, time: null, tags: [] };
 }
 
 function rowSortKey(
@@ -522,6 +570,7 @@ type BoardRowLiProps = {
   setDragHeight: (height: number) => void;
   setDropIndicator: Dispatch<SetStateAction<DropIndicator | null>>;
   onReorder: (fromId: string, toId: string, edge: "before" | "after") => void;
+  onContextMenu?: (event: ReactMouseEvent<HTMLLIElement>) => void;
   children: ReactNode;
 };
 
@@ -537,6 +586,7 @@ function BoardRowLi({
   setDragHeight,
   setDropIndicator,
   onReorder,
+  onContextMenu,
   children,
 }: BoardRowLiProps) {
   return (
@@ -552,6 +602,7 @@ function BoardRowLi({
       setDragHeight={setDragHeight}
       setDropIndicator={setDropIndicator}
       onReorder={onReorder}
+      onContextMenu={onContextMenu}
       className="rounded-lg px-1 py-0.5 group"
       draggingClassName="rounded-lg border-2 border-ink/70 bg-transparent px-1 py-0.5 opacity-35 group"
     >
@@ -668,6 +719,14 @@ export function WeeklyStrategyBoard() {
   const [dropIndicator, setDropIndicator] = useState<DropIndicator | null>(
     null,
   );
+  const [boxMenu, setBoxMenu] = useState<{
+    x: number;
+    y: number;
+    viewWeek: string;
+    viewDay: DayKey;
+    rowId: string;
+  } | null>(null);
+  const closeBoxMenu = useCallback(() => setBoxMenu(null), []);
 
   const weekDues = useMemo(
     () => (plan ? eventsForWeek(dueEvents, plan.weekOf) : []),
@@ -817,6 +876,7 @@ export function WeeklyStrategyBoard() {
     setDragTaskId(null);
     setDragHeight(0);
     setDropIndicator(null);
+    setBoxMenu(null);
     setPlan((prev) => {
       if (prev) cachePlan(prev);
       const stored = peekPlan(weekOf);
@@ -1456,7 +1516,10 @@ export function WeeklyStrategyBoard() {
     });
   }
 
-  function estimateMinutesFor(row: DayBoardRow): number | undefined {
+  function estimateMinutesFor(
+    row: DayBoardRow,
+    explicitWeek?: string,
+  ): number | undefined {
     if (!plan) return undefined;
     if (row.kind === "task") return row.item.estimateMinutes;
     const boxId =
@@ -1465,7 +1528,7 @@ export function WeeklyStrategyBoard() {
         : row.kind === "reminder"
           ? reminderEstimateKey(row.item.reminderId)
           : row.item.id;
-    const sourceWeek = row.carry?.sourceWeekOf ?? weekOf;
+    const sourceWeek = row.carry?.sourceWeekOf ?? explicitWeek ?? weekOf;
     const estimates =
       (sourceWeek === weekOf ? plan : planForWeek(sourceWeek)).overlayEstimates ??
       {};
@@ -1477,14 +1540,12 @@ export function WeeklyStrategyBoard() {
     row: DayBoardRow,
     day: DayKey,
     minutes: number | undefined,
+    explicitWeek?: string,
   ) {
+    const writeWeek = row.carry?.sourceWeekOf ?? explicitWeek ?? weekOf;
+    const writeDay = row.carry?.sourceDay ?? day;
     if (row.kind === "task") {
-      setTaskEstimate(
-        row.carry?.sourceDay ?? day,
-        row.item.id,
-        minutes,
-        row.carry?.sourceWeekOf ?? weekOf,
-      );
+      setTaskEstimate(writeDay, row.item.id, minutes, writeWeek);
       return;
     }
     const boxId =
@@ -1493,7 +1554,6 @@ export function WeeklyStrategyBoard() {
         : row.kind === "reminder"
           ? reminderEstimateKey(row.item.reminderId)
           : row.item.id;
-    const targetWeek = row.carry?.sourceWeekOf ?? weekOf;
     if (row.kind === "event") {
       const seriesDefault =
         row.item.estimateMinutes && row.item.estimateMinutes > 0
@@ -1505,11 +1565,178 @@ export function WeeklyStrategyBoard() {
       setOverlayEstimate(
         boxId,
         next === seriesDefault ? undefined : next,
-        targetWeek,
+        writeWeek,
       );
       return;
     }
-    setOverlayEstimate(boxId, minutes, targetWeek);
+    setOverlayEstimate(boxId, minutes, writeWeek);
+  }
+
+  function mirrorEditing(
+    id: string,
+    patch: { tags?: BoxTag[]; time?: BoardTimeRange | null },
+  ) {
+    setEditingTask((cur) => {
+      if (!cur || cur.id !== id) return cur;
+      const value =
+        patch.time !== undefined ? detachBoardTime(cur.value).text : cur.value;
+      const next = { ...cur, ...patch, value };
+      editingTaskRef.current = next;
+      return next;
+    });
+  }
+
+  function updateEventBox(
+    item: EventBoardBox,
+    patch: { time?: BoardTimeRange | null; tags?: BoxTag[] },
+  ) {
+    const event = peekDueEvents().find((entry) => entry.id === item.sourceEventId);
+    if (!event) return;
+    if (item.sourceRuleId === "appear") {
+      if (patch.time === undefined) return;
+      void saveDueEvent({
+        ...event,
+        startTime: patch.time?.startTime,
+        endTime: patch.time?.endTime,
+      });
+      return;
+    }
+    const rules = (event.rules ?? []).map((rule) => {
+      if (rule.id !== item.sourceRuleId) return rule;
+      const next = { ...rule };
+      if (patch.tags) next.tags = normalizeTaskTags(patch.tags);
+      if (patch.time !== undefined) {
+        if (patch.time) {
+          next.startTime = patch.time.startTime;
+          if (patch.time.endTime) next.endTime = patch.time.endTime;
+          else delete next.endTime;
+        } else {
+          delete next.startTime;
+          delete next.endTime;
+        }
+      }
+      return next;
+    });
+    void saveDueEvent({ ...event, rules });
+  }
+
+  function setRowTime(
+    row: DayBoardRow,
+    day: DayKey,
+    time: BoardTimeRange | null,
+    explicitWeek?: string,
+  ) {
+    if (row.kind === "task") {
+      const writeDay = row.carry?.sourceDay ?? day;
+      const writeWeek = row.carry?.sourceWeekOf ?? explicitWeek ?? weekOf;
+      patchWeekPlan(writeWeek, (prev) => ({
+        ...prev,
+        days: {
+          ...prev.days,
+          [writeDay]: prev.days[writeDay].map((task) => {
+            if (task.id !== row.item.id) return task;
+            const next: TaskItem = { ...task };
+            if (time) {
+              next.startTime = time.startTime;
+              if (time.endTime) next.endTime = time.endTime;
+              else delete next.endTime;
+            } else {
+              delete next.startTime;
+              delete next.endTime;
+            }
+            return next;
+          }),
+        },
+      }));
+      mirrorEditing(row.item.id, { time });
+      return;
+    }
+    if (row.kind === "routine") {
+      const existing = recurringTodos.find((todo) => todo.id === row.item.todoId);
+      if (!existing) return;
+      void saveRecurringTodo({
+        id: existing.id,
+        text: existing.text,
+        tags: existing.tags,
+        day: existing.day,
+        ...(time ? clockFields(time) : {}),
+      });
+      mirrorEditing(row.item.id, { time });
+      return;
+    }
+    if (row.kind === "event") updateEventBox(row.item, { time });
+  }
+
+  function setRowTags(
+    row: DayBoardRow,
+    day: DayKey,
+    tags: BoxTag[],
+    explicitWeek?: string,
+  ) {
+    const nextTags = normalizeTaskTags(tags);
+    if (row.kind === "task") {
+      const writeDay = row.carry?.sourceDay ?? day;
+      const writeWeek = row.carry?.sourceWeekOf ?? explicitWeek ?? weekOf;
+      patchWeekPlan(writeWeek, (prev) => ({
+        ...prev,
+        days: {
+          ...prev.days,
+          [writeDay]: prev.days[writeDay].map((task) =>
+            task.id === row.item.id
+              ? { ...task, tags: nextTags, optional: undefined }
+              : task,
+          ),
+        },
+      }));
+      mirrorEditing(row.item.id, { tags: nextTags });
+      return;
+    }
+    if (row.kind === "routine") {
+      const existing = recurringTodos.find(
+        (todo) => todo.id === row.item.todoId,
+      );
+      if (!existing) return;
+      void saveRecurringTodo({
+        id: existing.id,
+        text: existing.text,
+        tags: nextTags,
+        day: existing.day,
+        ...(existing.startTime ? { startTime: existing.startTime } : {}),
+        ...(existing.endTime ? { endTime: existing.endTime } : {}),
+      });
+      mirrorEditing(row.item.id, { tags: nextTags });
+      return;
+    }
+    if (row.kind === "reminder") {
+      void updateReminder(row.item.reminderId, { tags: nextTags });
+      return;
+    }
+    if (row.kind === "event" && row.item.sourceRuleId !== "appear") {
+      updateEventBox(row.item, { tags: nextTags });
+    }
+  }
+
+  function openBoxMenu(
+    event: ReactMouseEvent,
+    day: DayKey,
+    row: DayBoardRow,
+    viewWeek?: string,
+  ) {
+    const target = event.target;
+    if (
+      target instanceof Element &&
+      target.closest("input, textarea, select, [contenteditable='true']")
+    ) {
+      return;
+    }
+    event.preventDefault();
+    setBoxMenu({
+      x: event.clientX,
+      y: event.clientY,
+      viewWeek: row.carry?.sourceWeekOf ?? viewWeek ?? weekOf,
+      viewDay: row.carry?.sourceDay ?? day,
+      rowId: boardRowId(row),
+    });
   }
 
   function toggleBoardRow(day: DayKey, row: DayBoardRow) {
@@ -1554,6 +1781,24 @@ export function WeeklyStrategyBoard() {
       };
     });
   }
+
+  const menuRow = (() => {
+    if (!boxMenu) return null;
+    const rows =
+      boxMenu.viewWeek === weekOf
+        ? sortedDayRows(boxMenu.viewDay)
+        : sortedDayRowsForWeek(
+            boxMenu.viewWeek,
+            planForWeek(boxMenu.viewWeek),
+            boxMenu.viewDay,
+          );
+    return (
+      rows.find((row) => boardRowId(row) === boxMenu.rowId && !row.carry) ??
+      rows.find((row) => boardRowId(row) === boxMenu.rowId) ??
+      null
+    );
+  })();
+  const menuActions = menuRow ? boxActionState(menuRow) : null;
 
   return (
     <div className="mx-auto w-full max-w-6xl px-4 pb-20 sm:px-6">
@@ -1811,6 +2056,8 @@ export function WeeklyStrategyBoard() {
                           toId: string,
                           edge: "before" | "after",
                         ) => reorderBox(day.key, fromId, toId, edge),
+                        onContextMenu: (event: ReactMouseEvent<HTMLLIElement>) =>
+                          openBoxMenu(event, day.key, row),
                       };
 
                       if (row.kind === "event") {
@@ -2571,6 +2818,9 @@ export function WeeklyStrategyBoard() {
                 return (
                   <li
                     key={key}
+                    onContextMenu={(event) =>
+                      openBoxMenu(event, day, row, missedWeek)
+                    }
                     className="flex items-start gap-3 rounded-xl border border-border/70 bg-white/65 px-4 py-3 backdrop-blur-sm"
                   >
                     <Checkbox
@@ -2635,6 +2885,37 @@ export function WeeklyStrategyBoard() {
       <section className="mt-10">
         <WeeklyRoutinesPanel />
       </section>
+      {boxMenu && !menuRow ? (
+        <DismissBoxMenu onDismiss={closeBoxMenu} />
+      ) : null}
+      {boxMenu && menuRow && menuActions ? (
+        <BoxContextMenu
+          key={`${boxMenu.viewWeek}:${boxMenu.viewDay}:${boxMenu.rowId}:${boxMenu.x}:${boxMenu.y}`}
+          x={boxMenu.x}
+          y={boxMenu.y}
+          minutes={estimateMinutesFor(menuRow, boxMenu.viewWeek)}
+          time={menuActions.time}
+          tags={menuActions.tags}
+          canTime={menuActions.canTime}
+          canTags={menuActions.canTags}
+          scopeNote={menuActions.scopeNote}
+          onDuration={(minutes) =>
+            setRowEstimate(
+              menuRow,
+              boxMenu.viewDay,
+              minutes,
+              boxMenu.viewWeek,
+            )
+          }
+          onTime={(time) =>
+            setRowTime(menuRow, boxMenu.viewDay, time, boxMenu.viewWeek)
+          }
+          onTags={(tags) =>
+            setRowTags(menuRow, boxMenu.viewDay, tags, boxMenu.viewWeek)
+          }
+          onClose={closeBoxMenu}
+        />
+      ) : null}
     </div>
   );
 }

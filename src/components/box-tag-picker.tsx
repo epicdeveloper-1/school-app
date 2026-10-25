@@ -17,12 +17,52 @@ type BoxTagPickerProps = {
   align?: "left" | "right";
 };
 
+export function BoxTagList({
+  tags,
+  onChange,
+}: {
+  tags: BoxTag[];
+  onChange: (tags: BoxTag[]) => void;
+}) {
+  const { tags: boxTags } = useTags();
+  const selected = normalizeTaskTags(tags);
+
+  return (
+    <>
+      {boxTags.map((meta) => {
+        const active = selected.includes(meta.id);
+        return (
+          <button
+            key={meta.id}
+            type="button"
+            role="option"
+            aria-selected={active}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => onChange(toggleTaskTag(selected, meta.id))}
+            className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition-colors hover:bg-secondary/70 ${
+              active ? "bg-secondary/50" : ""
+            }`}
+          >
+            <span
+              className="size-2.5 shrink-0 rounded-full"
+              style={{ backgroundColor: meta.color }}
+              aria-hidden
+            />
+            <span style={{ color: meta.color }} className="font-medium">
+              {meta.label}
+            </span>
+          </button>
+        );
+      })}
+    </>
+  );
+}
+
 export function BoxTagPicker({
   tags,
   onChange,
   align = "right",
 }: BoxTagPickerProps) {
-  const { tags: boxTags } = useTags();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -72,31 +112,7 @@ export function BoxTagPicker({
             align === "right" ? "right-0" : "left-0"
           }`}
         >
-          {boxTags.map((meta) => {
-            const active = selected.includes(meta.id);
-            return (
-              <button
-                key={meta.id}
-                type="button"
-                role="option"
-                aria-selected={active}
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => onChange(toggleTaskTag(selected, meta.id))}
-                className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition-colors hover:bg-secondary/70 ${
-                  active ? "bg-secondary/50" : ""
-                }`}
-              >
-                <span
-                  className="size-2.5 shrink-0 rounded-full"
-                  style={{ backgroundColor: meta.color }}
-                  aria-hidden
-                />
-                <span style={{ color: meta.color }} className="font-medium">
-                  {meta.label}
-                </span>
-              </button>
-            );
-          })}
+          <BoxTagList tags={tags} onChange={onChange} />
         </div>
       )}
     </div>

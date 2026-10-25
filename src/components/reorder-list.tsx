@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   type Dispatch,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   type SetStateAction,
@@ -106,6 +107,7 @@ type ReorderRowProps = {
   className?: string;
   /** Extra classes for the outer wrapper when this row is the drag source. */
   draggingClassName?: string;
+  onContextMenu?: (event: ReactMouseEvent<HTMLLIElement>) => void;
 };
 
 function hitTestRow(
@@ -144,6 +146,7 @@ export function ReorderRow({
   children,
   className,
   draggingClassName,
+  onContextMenu,
 }: ReorderRowProps) {
   const rowRef = useRef<HTMLLIElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -263,6 +266,7 @@ export function ReorderRow({
     <li
       ref={rowRef}
       data-reorder-row={rowId}
+      onContextMenu={onContextMenu}
       className={cn(
         "relative list-none transition-[opacity,transform,box-shadow] duration-200 ease-out",
         isDragging &&
