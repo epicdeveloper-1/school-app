@@ -7,6 +7,7 @@ declare global {
       isDesktop: boolean;
       getItem: (key: string) => Promise<string | null>;
       setItem: (key: string, value: string) => Promise<boolean>;
+      openExternal?: (url: string) => Promise<boolean>;
     };
   }
 }

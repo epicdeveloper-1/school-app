@@ -156,11 +156,6 @@
   animation: draw-line 0.9s cubic-bezier(0.22, 1, 0.36, 1) 0.35s both;
 }
 
-::highlight(task-link) {
-  background-color: #d4d4d4;
-  color: CanvasText;
-}
-
 .app-shell {
   overflow-x: hidden;
   background:

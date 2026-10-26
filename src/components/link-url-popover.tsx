@@ -24,6 +24,18 @@ function emit() {
   for (const listener of listeners) listener();
 }
 
+const HIGHLIGHT_STYLE_ID = "task-link-highlight-style";
+
+/** Injected at runtime so the production CSS parser never sees `::highlight`. */
+function ensureHighlightStyle() {
+  if (document.getElementById(HIGHLIGHT_STYLE_ID)) return;
+  const style = document.createElement("style");
+  style.id = HIGHLIGHT_STYLE_ID;
+  style.textContent =
+    "::highlight(task-link){background-color:#d4d4d4;color:CanvasText}";
+  document.head.appendChild(style);
+}
+
 function setHighlight(range: Range | null | undefined) {
   const highlights = (CSS as { highlights?: Map<string, unknown> }).highlights;
   if (!highlights || typeof Highlight === "undefined") return;
@@ -31,6 +43,7 @@ function setHighlight(range: Range | null | undefined) {
     highlights.delete("task-link");
     return;
   }
+  ensureHighlightStyle();
   highlights.set("task-link", new Highlight(range));
 }
 

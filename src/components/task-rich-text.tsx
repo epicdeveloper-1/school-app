@@ -30,7 +30,13 @@ export function TaskRichText({ text, dimmed, className }: TaskRichTextProps) {
             rel="noopener noreferrer"
             data-vis-start={start}
             className="underline decoration-seafoam/50 underline-offset-2 hover:decoration-seafoam"
-            onClick={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              const open = window.weeklyStrategy?.openExternal;
+              if (!open || !/^https?:\/\//i.test(seg.href)) return;
+              e.preventDefault();
+              void open(seg.href);
+            }}
           >
             {seg.label}
           </a>

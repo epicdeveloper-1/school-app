@@ -1,4 +1,5 @@
-const { app, BrowserWindow, ipcMain } = require("electron");
+const { app, BrowserWindow, ipcMain, shell } = require("electron");
+const { spawn } = require("child_process");
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
@@ -52,6 +53,70 @@ ipcMain.handle("storage:get", (_event, key) => {
     return null;
   }
 });
+
+function chromeExecutable() {
+  const candidates =
+    process.platform === "win32"
+      ? [
+          process.env.PROGRAMFILES &&
+            path.join(
+              process.env.PROGRAMFILES,
+              "Google",
+              "Chrome",
+              "Application",
+              "chrome.exe",
+            ),
+          process.env["PROGRAMFILES(X86)"] &&
+            path.join(
+              process.env["PROGRAMFILES(X86)"],
+              "Google",
+              "Chrome",
+              "Application",
+              "chrome.exe",
+            ),
+          process.env.LOCALAPPDATA &&
+            path.join(
+              process.env.LOCALAPPDATA,
+              "Google",
+              "Chrome",
+              "Application",
+              "chrome.exe",
+            ),
+        ]
+      : process.platform === "darwin"
+        ? ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"]
+        : [];
+  return candidates.find((candidate) => candidate && fs.existsSync(candidate)) || null;
+}
+
+function externalHttpUrl(raw) {
+  try {
+    const parsed = new URL(String(raw));
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+    if (parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost") {
+      return null;
+    }
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+/** Open a web link in Google Chrome. Falls back to the default browser. */
+function openInGoogleChrome(raw) {
+  const url = externalHttpUrl(raw);
+  if (!url) return false;
+  const chrome = chromeExecutable();
+  if (chrome) {
+    const child = spawn(chrome, [url], { detached: true, stdio: "ignore" });
+    child.unref();
+    return true;
+  }
+  void shell.openExternal(url);
+  return true;
+}
+
+ipcMain.handle("shell:open-external", (_event, url) => openInGoogleChrome(url));
 
 ipcMain.handle("storage:set", (_event, key, value) => {
   try {
@@ -165,6 +230,20 @@ async function createWindow() {
 
   mainWindow.once("ready-to-show", () => {
     mainWindow?.show();
+  });
+
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (externalHttpUrl(url)) {
+      openInGoogleChrome(url);
+      return { action: "deny" };
+    }
+    return { action: "allow" };
+  });
+
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    if (!externalHttpUrl(url)) return;
+    event.preventDefault();
+    openInGoogleChrome(url);
   });
 
   if (isDev) {
