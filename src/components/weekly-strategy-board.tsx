@@ -34,6 +34,7 @@ import {
   TaskEstimateInput,
 } from "@/components/day-timing";
 import { BoxText } from "@/components/box-text";
+import { openLinkPopover } from "@/components/link-url-popover";
 import { SubBoxList, SubBoxToggle } from "@/components/sub-box-list";
 import { handleTaskLinkKey } from "@/components/task-link-key";
 import {
@@ -48,7 +49,12 @@ import { DATA_SYNC_EVENT } from "@/lib/tag-data-sync";
 import type { TagChipUndoState } from "@/lib/tag-chip-key";
 import { handleTimeChipKey } from "@/lib/time-chip-key";
 import type { TimeChipUndoState } from "@/lib/time-chip-key";
-import { visibleTaskText } from "@/lib/task-links";
+import {
+  linkFieldPrefill,
+  linkUnlinkedText,
+  parseTaskLinks,
+  visibleTaskText,
+} from "@/lib/task-links";
 import { normalizeSubBoxMap, type SubBox } from "@/lib/sub-boxes";
 import {
   detachBoardTime,
@@ -292,6 +298,38 @@ function boardRowId(row: DayBoardRow): string {
     case "task":
       return row.item.id;
   }
+}
+
+function canLinkBoardRow(row: DayBoardRow): boolean {
+  return row.kind === "task" || row.kind === "routine" || row.kind === "reminder";
+}
+
+/** Box body element, skipping sub-box text nested in the same row. */
+function boxTextAnchor(root: HTMLElement | null): HTMLElement | null {
+  if (!root) return null;
+  for (const node of root.querySelectorAll("[data-box-text]")) {
+    if (!(node instanceof HTMLElement)) continue;
+    if (node.closest('[aria-label="Sub-boxes"]')) continue;
+    return node;
+  }
+  return null;
+}
+
+/** Text nodes in the box that are not already inside a link. */
+function unlinkedTextRanges(root: HTMLElement): Range[] {
+  const ranges: Range[] = [];
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let node = walker.nextNode();
+  while (node) {
+    const parent = node.parentElement;
+    if (parent && !parent.closest("a") && node.textContent) {
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      ranges.push(range);
+    }
+    node = walker.nextNode();
+  }
+  return ranges;
 }
 
 function boardRowLabel(row: DayBoardRow): string {
@@ -711,6 +749,10 @@ export function WeeklyStrategyBoard() {
     rowId: string;
   } | null>(null);
   const closeBoxMenu = useCallback(() => setBoxMenu(null), []);
+  const menuAnchorRef = useRef<HTMLElement | null>(null);
+  const applyBoardBoxLinkRef = useRef<
+    (row: DayBoardRow, day: DayKey, week: string, href: string) => void
+  >(() => {});
   /** Row ids whose sub-boxes are expanded. Missing ids stay collapsed. */
   const [openSubs, setOpenSubs] = useState<Record<string, boolean>>({});
   const [subFocus, setSubFocus] = useState<{
@@ -1255,6 +1297,112 @@ export function WeeklyStrategyBoard() {
     if (row.kind === "reminder") {
       void updateReminder(row.item.reminderId, { text });
     }
+  }
+
+  function applyBoardBoxLink(
+    row: DayBoardRow,
+    day: DayKey,
+    week: string,
+    href: string,
+  ) {
+    const editing = editingTaskRef.current;
+    if (
+      editing &&
+      (row.kind === "task" || row.kind === "routine") &&
+      editing.source === row.kind &&
+      editing.id === row.item.id
+    ) {
+      const next = linkUnlinkedText(editing.value, href);
+      if (!next || next === editing.value) return;
+      const updated = { ...editing, value: next };
+      editingTaskRef.current = updated;
+      setEditingTask(updated);
+      return;
+    }
+
+    if (row.kind === "task") {
+      const writeDay = row.carry?.sourceDay ?? day;
+      const writeWeek = row.carry?.sourceWeekOf ?? week;
+      patchWeekPlan(writeWeek, (prev) => ({
+        ...prev,
+        days: {
+          ...prev.days,
+          [writeDay]: prev.days[writeDay].map((task) => {
+            if (task.id !== row.item.id) return task;
+            const body = taskBodyText(task);
+            const next = linkUnlinkedText(body, href);
+            if (!next || next === body) return task;
+            return { ...task, text: next, optional: undefined };
+          }),
+        },
+      }));
+      return;
+    }
+
+    if (row.kind === "routine") {
+      const existing = peekRecurringTodos().find(
+        (todo) => todo.id === row.item.todoId,
+      );
+      if (!existing) return;
+      const next = linkUnlinkedText(existing.text, href);
+      if (!next || next === existing.text) return;
+      void saveRecurringTodo({
+        id: existing.id,
+        text: next.trim() || existing.text,
+        tags: existing.tags,
+        day: existing.day,
+        ...(existing.startTime ? { startTime: existing.startTime } : {}),
+        ...(existing.endTime ? { endTime: existing.endTime } : {}),
+      });
+      return;
+    }
+
+    if (row.kind === "reminder") {
+      const existing = peekReminders().find(
+        (item) => item.id === row.item.reminderId,
+      );
+      if (!existing) return;
+      const next = linkUnlinkedText(existing.text, href);
+      if (!next || next === existing.text) return;
+      void updateReminder(existing.id, { text: next });
+    }
+  }
+  applyBoardBoxLinkRef.current = applyBoardBoxLink;
+
+  function openBoxLink(row: DayBoardRow, day: DayKey, week: string) {
+    const root = menuAnchorRef.current;
+    const textEl = boxTextAnchor(root);
+    const highlightRange = textEl ? unlinkedTextRanges(textEl) : null;
+    const unlinked = parseTaskLinks(boardRowLabel(row))
+      .filter((segment) => segment.type === "text")
+      .map((segment) => segment.text)
+      .join("");
+    openLinkPopover({
+      prefill: linkFieldPrefill(unlinked),
+      highlightRange,
+      getAnchor: () => {
+        const el = textEl?.isConnected
+          ? textEl
+          : root?.isConnected
+            ? root
+            : null;
+        if (!el) return null;
+        const rect = el.getBoundingClientRect();
+        if (rect.height < 1 && root?.isConnected) {
+          const rowRect = root.getBoundingClientRect();
+          return {
+            top: rowRect.top,
+            bottom: rowRect.bottom,
+            left: rowRect.left,
+          };
+        }
+        return { top: rect.top, bottom: rect.bottom, left: rect.left };
+      },
+      onResolve: (url) => {
+        if (!url) return;
+        applyBoardBoxLinkRef.current(row, day, week, url);
+      },
+    });
   }
 
   const planForWeek = (targetWeekOf: string): WeekPlan => {
@@ -1816,6 +1964,8 @@ export function WeeklyStrategyBoard() {
       return;
     }
     event.preventDefault();
+    menuAnchorRef.current =
+      event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
     setBoxMenu({
       x: event.clientX,
       y: event.clientY,
@@ -2340,7 +2490,7 @@ export function WeeklyStrategyBoard() {
                                 toggleBoardRow(day.key, row)
                               }
                               className="mt-0.5"
-                              aria-label={`Mark ${item.text} complete`}
+                              aria-label={`Mark ${visibleTaskText(item.text) || "reminder"} complete`}
                             />
                             <span
                               className={`min-w-0 flex-1 text-sm leading-snug ${
@@ -2405,7 +2555,7 @@ export function WeeklyStrategyBoard() {
                                 toggleBoardRow(day.key, row)
                               }
                               className="mt-0.5"
-                              aria-label={`Mark ${item.text} complete`}
+                              aria-label={`Mark ${visibleTaskText(item.text) || "box"} complete`}
                             />
                             {isEditing ? (
                               <div
@@ -3040,7 +3190,14 @@ export function WeeklyStrategyBoard() {
                       </p>
                       <p className="text-sm leading-snug text-foreground">
                         <TaskTagPrefixes tags={tags} separator={Boolean(label)} />
-                        <span>{label}</span>
+                        {canLinkBoardRow(row) ? (
+                          <BoxText
+                            text={label}
+                            onChange={(text) => setOwnedBoxText(day, row, text)}
+                          />
+                        ) : (
+                          <span>{label}</span>
+                        )}
                         {timeNote ? (
                           <span className="ml-1.5 text-xs text-muted-foreground">
                             ({timeNote})
@@ -3140,6 +3297,12 @@ export function WeeklyStrategyBoard() {
           }
           onAddSubBox={() =>
             addSubBox(boxMenu.viewWeek, boardRowId(menuRow), "")
+          }
+          onAddLink={
+            canLinkBoardRow(menuRow)
+              ? () =>
+                  openBoxLink(menuRow, boxMenu.viewDay, boxMenu.viewWeek)
+              : undefined
           }
           onClose={closeBoxMenu}
         />

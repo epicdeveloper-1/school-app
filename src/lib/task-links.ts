@@ -225,6 +225,25 @@ export function linkFieldPrefillForSelection(
 }
 
 /**
+ * Link every visible character that is not already a link.
+ * Existing links stay as they are. `]` stays plain text so the markdown
+ * label stays valid. Returns null when the URL is empty or only a protocol.
+ */
+export function linkUnlinkedText(text: string, href: string): string | null {
+  const normalized = normalizeHref(href);
+  if (!normalized || /^https?:\/\/$/i.test(normalized)) return null;
+  const pieces = toPieces(text);
+  let changed = false;
+  const next = pieces.map((piece) => {
+    if (piece.href || piece.ch === "]") return piece;
+    changed = true;
+    return { ch: piece.ch, href: normalized };
+  });
+  if (!changed) return text;
+  return fromPieces(next);
+}
+
+/**
  * Link the visible selection to `href`.
  * Returns null when the URL is empty or only a protocol.
  */

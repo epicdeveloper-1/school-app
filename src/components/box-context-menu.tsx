@@ -8,7 +8,14 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
-import { ChevronLeft, Clock, CornerDownRight, Hourglass, Tags } from "lucide-react";
+import {
+  ChevronLeft,
+  Clock,
+  CornerDownRight,
+  Hourglass,
+  Link2,
+  Tags,
+} from "lucide-react";
 import { BoxTagList } from "@/components/box-tag-picker";
 import { Input } from "@/components/ui/input";
 import type { BoxTag } from "@/lib/box-tags";
@@ -36,6 +43,8 @@ type BoxContextMenuProps = {
   onTime: (time: BoardTimeRange | null) => void;
   onTags: (tags: BoxTag[]) => void;
   onAddSubBox?: () => void;
+  /** Link every character in the box that is not already a link. */
+  onAddLink?: () => void;
   onClose: () => void;
 };
 
@@ -59,6 +68,7 @@ export function BoxContextMenu({
   onTime,
   onTags,
   onAddSubBox,
+  onAddLink,
   onClose,
 }: BoxContextMenuProps) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -148,6 +158,16 @@ export function BoxContextMenu({
               hint="Shift+Enter"
               onClick={() => {
                 onAddSubBox();
+                onClose();
+              }}
+            />
+          )}
+          {onAddLink && (
+            <MenuItem
+              icon={<Link2 className="size-3.5" />}
+              label="Add link"
+              onClick={() => {
+                onAddLink();
                 onClose();
               }}
             />

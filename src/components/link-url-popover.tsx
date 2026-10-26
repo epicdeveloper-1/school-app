@@ -10,7 +10,7 @@ export type LinkPopoverRequest = {
   session: number;
   getAnchor: () => LinkAnchor | null;
   prefill: string;
-  highlightRange?: Range | null;
+  highlightRange?: Range | readonly Range[] | null;
   onResolve: (url: string | null) => void;
 };
 
@@ -36,15 +36,18 @@ function ensureHighlightStyle() {
   document.head.appendChild(style);
 }
 
-function setHighlight(range: Range | null | undefined) {
+function setHighlight(range: Range | readonly Range[] | null | undefined) {
   const highlights = (CSS as { highlights?: Map<string, unknown> }).highlights;
   if (!highlights || typeof Highlight === "undefined") return;
-  if (!range) {
+  const list = (Array.isArray(range) ? range : range ? [range] : []).filter(
+    (item): item is Range => item instanceof Range,
+  );
+  if (list.length === 0) {
     highlights.delete("task-link");
     return;
   }
   ensureHighlightStyle();
-  highlights.set("task-link", new Highlight(range));
+  highlights.set("task-link", new Highlight(...list));
 }
 
 function subscribe(listener: Listener) {

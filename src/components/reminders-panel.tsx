@@ -3,11 +3,13 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, Plus, Trash2 } from "lucide-react";
 import { BoxTagPicker, TaskTagPrefixes } from "@/components/box-tag-picker";
+import { BoxText } from "@/components/box-text";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import type { BoxTag } from "@/lib/box-tags";
 import { normalizeTaskTags } from "@/lib/box-tags";
+import { visibleTaskText } from "@/lib/task-links";
 import {
   handleTagChipKey,
   type TagChipUndoState,
@@ -91,7 +93,7 @@ function ReminderRow({
         checked={reminder.done}
         onCheckedChange={onToggle}
         className="mt-0.5"
-        aria-label={`Mark ${reminder.text} complete`}
+        aria-label={`Mark ${visibleTaskText(reminder.text) || "reminder"} complete`}
       />
       {editing ? (
         <div
@@ -150,10 +152,21 @@ function ReminderRow({
         </div>
       ) : (
         <>
-          <button
-            type="button"
-            onClick={beginEdit}
-            className={`min-w-0 flex-1 break-words rounded-sm text-left text-sm leading-snug outline-none hover:bg-secondary/40 focus-visible:ring-2 focus-visible:ring-ring/50 ${
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={(event) => {
+              const target = event.target;
+              if (target instanceof Element && target.closest("a")) return;
+              beginEdit();
+            }}
+            onKeyDown={(event) => {
+              if (event.target !== event.currentTarget) return;
+              if (event.key !== "Enter" && event.key !== " ") return;
+              event.preventDefault();
+              beginEdit();
+            }}
+            className={`min-w-0 flex-1 cursor-text break-words rounded-sm text-left text-sm leading-snug outline-none hover:bg-secondary/40 focus-visible:ring-2 focus-visible:ring-ring/50 ${
               reminder.done ? "line-through" : ""
             }`}
           >
@@ -162,14 +175,12 @@ function ReminderRow({
               dimmed={reminder.done}
               separator={Boolean(reminder.text)}
             />
-            <span
-              className={
-                reminder.done ? "text-muted-foreground" : "text-foreground"
-              }
-            >
-              {reminder.text}
-            </span>
-          </button>
+            <BoxText
+              text={reminder.text}
+              dimmed={reminder.done}
+              onChange={onText}
+            />
+          </div>
           <BoxTagPicker tags={reminder.tags} onChange={onTags} />
         </>
       )}
@@ -189,7 +200,7 @@ function ReminderRow({
         type="button"
         onClick={onDelete}
         title="Delete reminder"
-        aria-label={`Delete ${reminder.text}`}
+        aria-label={`Delete ${visibleTaskText(reminder.text) || "reminder"}`}
         className="mt-0.5 rounded p-1 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:text-destructive focus-visible:opacity-100"
       >
         <Trash2 className="size-3.5" aria-hidden />
