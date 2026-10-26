@@ -180,54 +180,93 @@ export function applyLinkAtVisibleRange(
   return fromPieces([...pieces.slice(0, start), ...mid, ...pieces.slice(end)]);
 }
 
+/** Href shared by every visible character in the range, if the range is one link. */
+export function hrefForVisibleRange(
+  text: string,
+  visStart: number,
+  visEnd: number,
+): string | null {
+  const pieces = toPieces(text);
+  const start = Math.max(0, Math.min(visStart, visEnd, pieces.length));
+  const end = Math.min(Math.max(visStart, visEnd), pieces.length);
+  if (end <= start) return null;
+  const href = pieces[start]?.href;
+  if (!href) return null;
+  for (let i = start + 1; i < end; i++) {
+    if (pieces[i]?.href !== href) return null;
+  }
+  return href;
+}
+
+/** Value shown in the link popup for a selection. */
+export function linkFieldPrefill(
+  label: string,
+  existingHref?: string | null,
+): string {
+  if (existingHref) return existingHref;
+  const trimmed = label.replace(/[\[\]]/g, "").trim();
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  return "https://";
+}
+
+export function linkFieldPrefillForSelection(
+  value: string,
+  selectionStart: number,
+  selectionEnd: number,
+): string {
+  const start = Math.max(0, Math.min(selectionStart, selectionEnd));
+  const end = Math.max(start, Math.max(selectionStart, selectionEnd));
+  const visStart = sourceIndexToVisible(value, start);
+  const visEnd = sourceIndexToVisible(value, end);
+  return linkFieldPrefill(
+    visibleSlice(value, visStart, visEnd),
+    hrefForVisibleRange(value, visStart, visEnd),
+  );
+}
+
 /**
- * Prompt for a URL and link the visible selection.
- * Returns null if the prompt is cancelled or the URL is empty.
+ * Link the visible selection to `href`.
+ * Returns null when the URL is empty or only a protocol.
  */
 export function linkVisibleSelection(
   text: string,
   visStart: number,
   visEnd: number,
   label: string,
-  askUrl: (prefill: string) => string | null = defaultAskUrl,
+  href: string,
 ): string | null {
+  const normalized = normalizeHref(href);
+  if (!normalized || /^https?:\/\/$/i.test(normalized)) return null;
   const trimmed = label.replace(/[\[\]]/g, "").trim();
-  const prefill = /^https?:\/\//i.test(trimmed) ? trimmed : "https://";
-  const raw = askUrl(prefill);
-  if (raw === null) return null;
-  const href = normalizeHref(raw);
-  if (!href) return null;
   return applyLinkAtVisibleRange(
     text,
     visStart,
     visEnd,
-    href,
+    normalized,
     trimmed || "link",
   );
 }
 
 /**
- * Wrap the current input selection in a markdown link, or insert `[link](url)`.
- * Returns null if the user cancels the URL prompt.
+ * Wrap the current input selection in a markdown link.
+ * Returns null when the URL is empty.
  */
 export function applyLinkAtSelection(
   value: string,
   selectionStart: number,
   selectionEnd: number,
-  askUrl: (prefill: string) => string | null = defaultAskUrl,
+  href: string,
 ): { value: string; selectionStart: number; selectionEnd: number } | null {
   const start = Math.max(0, Math.min(selectionStart, selectionEnd));
-  const end = Math.max(0, Math.max(selectionStart, selectionEnd));
+  const end = Math.max(start, Math.max(selectionStart, selectionEnd));
   const visStart = sourceIndexToVisible(value, start);
   const visEnd = sourceIndexToVisible(value, end);
   const selected = visibleSlice(value, visStart, visEnd);
-  const next = linkVisibleSelection(value, visStart, visEnd, selected, askUrl);
+  const next = linkVisibleSelection(value, visStart, visEnd, selected, href);
   if (next == null) return null;
-  const caret = visibleIndexToSource(next, visStart + safeLabel(selected).length);
+  const caret = visibleIndexToSource(
+    next,
+    visStart + safeLabel(selected).length,
+  );
   return { value: next, selectionStart: caret, selectionEnd: caret };
-}
-
-function defaultAskUrl(prefill: string): string | null {
-  if (typeof window === "undefined") return null;
-  return window.prompt("Link URL", prefill);
 }

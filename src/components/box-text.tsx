@@ -2,7 +2,15 @@
 
 import { useEffect, useRef } from "react";
 import { TaskRichText } from "@/components/task-rich-text";
-import { linkVisibleSelection } from "@/lib/task-links";
+import {
+  isLinkPopoverOpen,
+  openLinkPopover,
+} from "@/components/link-url-popover";
+import {
+  hrefForVisibleRange,
+  linkFieldPrefill,
+  linkVisibleSelection,
+} from "@/lib/task-links";
 
 type BoxTextBinding = {
   getText: () => string;
@@ -10,72 +18,114 @@ type BoxTextBinding = {
 };
 
 const bindings = new Map<HTMLElement, BoxTextBinding>();
-let listening = false;
+const HOTKEY = "__schoolAppLinkHotkey";
 
 function visibleOffset(
   root: HTMLElement,
   node: Node,
   offset: number,
 ): number | null {
-  const element =
-    node instanceof Element ? node : node.parentElement;
-  const marked = element?.closest("[data-vis-start]");
-  if (!(marked instanceof HTMLElement) || !root.contains(marked)) return null;
-  const base = Number(marked.dataset.visStart);
-  if (!Number.isFinite(base)) return null;
+  if (!root.contains(node)) return null;
   const range = document.createRange();
-  range.selectNodeContents(marked);
+  range.selectNodeContents(root);
   try {
     range.setEnd(node, offset);
   } catch {
-    return base;
+    return null;
   }
-  return base + range.toString().length;
+  return range.toString().length;
+}
+
+function boxRoot(node: Node | null): HTMLElement | null {
+  const element = node instanceof Element ? node : node?.parentElement;
+  const root = element?.closest("[data-box-text]");
+  return root instanceof HTMLElement ? root : null;
 }
 
 function onLinkHotkey(event: KeyboardEvent) {
-  if (event.defaultPrevented || event.altKey || event.shiftKey) return;
-  if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "k") {
+  if (event.altKey || event.shiftKey || event.isComposing || event.repeat) return;
+  if (!(event.ctrlKey || event.metaKey)) return;
+  if (event.key.toLowerCase() !== "k" && event.code !== "KeyK") return;
+
+  const target = event.target;
+  if (target instanceof Element && target.closest("[data-link-popover]")) {
+    event.preventDefault();
     return;
   }
-  const target = event.target;
-  if (
+  if (isLinkPopoverOpen()) return;
+
+  const inField =
     target instanceof HTMLInputElement ||
     target instanceof HTMLTextAreaElement ||
-    (target instanceof HTMLElement && target.isContentEditable)
-  ) {
+    (target instanceof HTMLElement && target.isContentEditable);
+  if (inField) {
+    if (
+      target instanceof HTMLInputElement ||
+      target instanceof HTMLTextAreaElement
+    ) {
+      const start = target.selectionStart ?? 0;
+      const end = target.selectionEnd ?? 0;
+      if (start !== end) event.preventDefault();
+    }
     return;
   }
+
   const selection = window.getSelection();
   if (!selection || selection.isCollapsed || selection.rangeCount === 0) return;
-  const anchor = selection.anchorNode;
-  const focus = selection.focusNode;
-  if (!anchor || !focus) return;
-  const anchorEl = anchor instanceof Element ? anchor : anchor.parentElement;
-  const root = anchorEl?.closest("[data-box-text]");
-  if (!(root instanceof HTMLElement) || !root.contains(focus)) return;
+  const root = boxRoot(selection.anchorNode);
+  if (!root || boxRoot(selection.focusNode) !== root) return;
   const binding = bindings.get(root);
   if (!binding) return;
-  const start = visibleOffset(root, anchor, selection.anchorOffset);
-  const end = visibleOffset(root, focus, selection.focusOffset);
+  const start = visibleOffset(root, selection.anchorNode!, selection.anchorOffset);
+  const end = visibleOffset(root, selection.focusNode!, selection.focusOffset);
   if (start == null || end == null || start === end) return;
+
   event.preventDefault();
   event.stopPropagation();
-  const next = linkVisibleSelection(
-    binding.getText(),
-    Math.min(start, end),
-    Math.max(start, end),
-    selection.toString(),
+
+  const visStart = Math.min(start, end);
+  const visEnd = Math.max(start, end);
+  const label = selection.toString();
+  const highlightRange = selection.getRangeAt(0).cloneRange();
+  const text = binding.getText();
+  const prefill = linkFieldPrefill(
+    label,
+    hrefForVisibleRange(text, visStart, visEnd),
   );
-  if (next == null) return;
-  binding.onChange(next);
-  selection.removeAllRanges();
+
+  openLinkPopover({
+    prefill,
+    highlightRange,
+    getAnchor: () => {
+      const rect = highlightRange.getBoundingClientRect();
+      return { top: rect.top, bottom: rect.bottom, left: rect.left };
+    },
+    onResolve: (url) => {
+      if (!url) return;
+      const next = linkVisibleSelection(
+        binding.getText(),
+        visStart,
+        visEnd,
+        label,
+        url,
+      );
+      if (next == null) return;
+      binding.onChange(next);
+      selection.removeAllRanges();
+    },
+  });
 }
 
 function ensureLinkHotkey() {
-  if (listening || typeof window === "undefined") return;
-  listening = true;
-  window.addEventListener("keydown", onLinkHotkey);
+  if (typeof window === "undefined") return;
+  const host = window as Window & {
+    [HOTKEY]?: (event: KeyboardEvent) => void;
+  };
+  if (host[HOTKEY]) {
+    window.removeEventListener("keydown", host[HOTKEY], true);
+  }
+  host[HOTKEY] = onLinkHotkey;
+  window.addEventListener("keydown", onLinkHotkey, true);
 }
 
 type BoxTextProps = {
