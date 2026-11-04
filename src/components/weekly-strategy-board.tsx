@@ -2556,11 +2556,8 @@ export function WeeklyStrategyBoard() {
                     Empty day — keep it light or add one priority.
                   </p>
                 ) : displayRows.length === 0 && collapseCompleted ? (
-                  <p className="mb-3 text-sm text-muted-foreground">
-                    All boxes completed
-                    {completedRows.length > 0 && !showCompleted
-                      ? " — tap the eye to review them."
-                      : "."}
+                  <p className="mb-3 text-sm font-medium text-emerald-700">
+                    All boxes complete!
                   </p>
                 ) : displayRows.length > 0 ? (
                   <ul className="mb-3 space-y-2">
