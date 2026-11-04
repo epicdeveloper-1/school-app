@@ -4,19 +4,38 @@ import { useEffect, useState } from "react";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import { Button } from "@/components/ui/button";
 import { useIsCloudProfile } from "@/components/profile-copy";
+import {
+  subscribeSyncStatus,
+  type SyncStatusSnapshot,
+} from "@/lib/cloud-sync";
 import { getFirebaseAuth, isFirebaseConfigured } from "@/lib/firebase-client";
+
+function formatSyncTime(ms: number | null): string {
+  if (ms == null) return "Not synced yet";
+  try {
+    return new Date(ms).toLocaleString();
+  } catch {
+    return "Not synced yet";
+  }
+}
 
 export function BlankAccountPanel() {
   const cloud = useIsCloudProfile();
   const [email, setEmail] = useState<string | null>(null);
+  const [status, setStatus] = useState<SyncStatusSnapshot | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!cloud || !isFirebaseConfigured()) return;
-    return onAuthStateChanged(getFirebaseAuth(), (user) => {
+    const unsubAuth = onAuthStateChanged(getFirebaseAuth(), (user) => {
       setEmail(user?.email ?? null);
     });
+    const unsubStatus = subscribeSyncStatus(setStatus);
+    return () => {
+      unsubAuth();
+      unsubStatus();
+    };
   }, [cloud]);
 
   if (!cloud) return null;
@@ -26,9 +45,19 @@ export function BlankAccountPanel() {
       <h2 className="font-heading text-lg font-semibold text-ink">Google account</h2>
       <p className="mt-1 text-sm text-muted-foreground">
         {email ? `Signed in as ${email}.` : "Signed in with Google."} Your planner
-        is stored for this account.
+        is stored for this account and cached in this browser.
       </p>
-      {error ? <p className="mt-2 text-sm text-destructive">{error}</p> : null}
+      {status?.lastSyncAt != null ? (
+        <p className="mt-2 text-xs text-muted-foreground">
+          Last sync: {formatSyncTime(status.lastSyncAt)}
+          {status.syncing ? " · Syncing…" : ""}
+        </p>
+      ) : null}
+      {error || status?.lastError ? (
+        <p className="mt-2 text-sm text-destructive">
+          {error ?? status?.lastError}
+        </p>
+      ) : null}
       <Button
         type="button"
         variant="outline"

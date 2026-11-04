@@ -9,7 +9,8 @@ const nextConfig: NextConfig = {
   images: {
     unoptimized: true,
   },
-  // Always a concrete string so the blank Firebase client is left out of personal builds.
+  // Concrete profile string for client bundles. Personal builds may still include
+  // Firebase when NEXT_PUBLIC_FIREBASE_* are set (optional desktop cloud sync).
   env: {
     NEXT_PUBLIC_APP_PROFILE: appProfile,
   },

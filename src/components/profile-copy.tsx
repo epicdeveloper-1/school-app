@@ -46,7 +46,10 @@ export function SettingsIntro() {
   if (cloud) {
     return "Customize how your planner works. Changes save to your Google account.";
   }
-  return "Customize how your planner works. Changes save locally on this device.";
+  if (process.env.NEXT_PUBLIC_APP_PROFILE === "blank") {
+    return "Customize how your planner works. Changes save locally on this device.";
+  }
+  return "Customize how your planner works. Changes save on this device first; optional Google sync is below.";
 }
 
 export function SiteFooter() {

@@ -1,22 +1,23 @@
 import { isBlankProfile } from "./app-profile";
+import { isFirebaseConfigured } from "./firebase-client";
+import {
+  hasDesktopBridge,
+  readLocalStorageValue,
+  writeLocalStorageValue,
+} from "./local-storage";
+import { SYNC_META_KEY, SYNC_STORAGE_KEYS, type SyncStorageKey } from "./sync-keys";
 
-declare global {
-  interface Window {
-    weeklyStrategy?: {
-      platform: string;
-      isDesktop: boolean;
-      getItem: (key: string) => Promise<string | null>;
-      setItem: (key: string, value: string) => Promise<boolean>;
-      openExternal?: (url: string) => Promise<boolean>;
-    };
-  }
-}
+export {
+  hasDesktopBridge,
+  readLocalStorageValue,
+  writeLocalStorageValue,
+} from "./local-storage";
 
 export type StorageTarget = "desktop" | "cloud" | "local";
 
 /**
- * Desktop files win whenever the Electron bridge is present, including a blank
- * profile build. Cloud storage is only the blank browser site.
+ * Primary store only. Cloud is a mirror on top of desktop/local, not a
+ * separate exclusive target anymore — kept for callers that still branch.
  */
 export function storageTarget(input: {
   hasDesktop: boolean;
@@ -28,73 +29,85 @@ export function storageTarget(input: {
 }
 
 function currentTarget(): StorageTarget {
-  const desktop = typeof window !== "undefined" ? window.weeklyStrategy : undefined;
   return storageTarget({
-    hasDesktop: Boolean(desktop?.getItem || desktop?.setItem),
+    hasDesktop: hasDesktopBridge(),
     blank: isBlankProfile(),
   });
 }
 
-const cloudStorage =
-  process.env.NEXT_PUBLIC_APP_PROFILE === "blank"
-    ? import("./cloud-storage")
-    : null;
-
-/** Read a string from Electron userData, the blank site's Firestore, or localStorage. */
-export async function readStorage(key: string): Promise<string | null> {
-  if (typeof window === "undefined") return null;
-
-  const desktop = window.weeklyStrategy;
-  const target = currentTarget();
-
-  if (target === "desktop" && desktop?.getItem) {
-    try {
-      const fromFile = await desktop.getItem(key);
-      if (fromFile != null && fromFile !== "") return fromFile;
-
-      // One-time migrate from any prior localStorage value.
-      const legacy = window.localStorage.getItem(key);
-      if (legacy != null) {
-        await desktop.setItem(key, legacy);
-        return legacy;
-      }
-      return null;
-    } catch {
-      return window.localStorage.getItem(key);
-    }
-  }
-
-  if (cloudStorage && target === "cloud") {
-    const { readCloudStorage } = await cloudStorage;
-    return readCloudStorage(key);
-  }
-
-  return window.localStorage.getItem(key);
+function isSyncKey(key: string): key is SyncStorageKey {
+  return (SYNC_STORAGE_KEYS as readonly string[]).includes(key);
 }
 
-/** Write a string to Electron userData, the blank site's Firestore, or localStorage. */
+let applyingRemote = false;
+let mirrorCloud:
+  | ((key: SyncStorageKey, value: string) => Promise<void>)
+  | null = null;
+
+/** Used by cloud-sync while applying remote blobs so writes stay local-only. */
+export function runWithoutCloudMirror<T>(fn: () => Promise<T>): Promise<T> {
+  applyingRemote = true;
+  return fn().finally(() => {
+    applyingRemote = false;
+  });
+}
+
+/** cloud-sync registers the push path after auth. */
+export function setCloudMirror(
+  fn: ((key: SyncStorageKey, value: string) => Promise<void>) | null,
+): void {
+  mirrorCloud = fn;
+}
+
+function canAttemptCloudMirror(): boolean {
+  if (applyingRemote || !mirrorCloud) return false;
+  if (!isFirebaseConfigured()) return false;
+  if (typeof window === "undefined") return false;
+  return true;
+}
+
+/** Read from the local primary store (desktop files or localStorage). */
+export async function readStorage(key: string): Promise<string | null> {
+  return readLocalStorageValue(key);
+}
+
+/**
+ * Write local first. When signed in, also mirror sync keys to Firestore.
+ * Cloud failures never roll back the local write.
+ */
 export async function writeStorage(key: string, value: string): Promise<void> {
-  if (typeof window === "undefined") return;
+  await writeLocalStorageValue(key, value);
 
-  const desktop = window.weeklyStrategy;
-  const target = currentTarget();
+  if (key === SYNC_META_KEY || !isSyncKey(key)) return;
 
-  if (target === "desktop" && desktop?.setItem) {
+  try {
+    const { touchLocalKeyMeta } = await import("./sync-meta");
+    await touchLocalKeyMeta(key);
+  } catch {
+    // Meta is best-effort; local value is already saved.
+  }
+
+  if (!canAttemptCloudMirror() || !mirrorCloud) return;
+  try {
+    await mirrorCloud(key, value);
+  } catch (err) {
+    console.error("cloud mirror failed", key, err);
     try {
-      await desktop.setItem(key, value);
-      return;
+      const { setSyncStatus } = await import("./sync-meta");
+      await setSyncStatus({
+        lastError: err instanceof Error ? err.message : "Cloud sync failed.",
+      });
     } catch {
-      // Fall through to localStorage if IPC fails.
-      window.localStorage.setItem(key, value);
-      return;
+      /* ignore */
     }
   }
+}
 
-  if (cloudStorage && target === "cloud") {
-    const { writeCloudStorage } = await cloudStorage;
-    await writeCloudStorage(key, value);
-    return;
-  }
+/** True when blank website (no Electron) should treat cloud as the shared store. */
+export function isBlankWebCloudSurface(): boolean {
+  return isBlankProfile() && !hasDesktopBridge();
+}
 
-  window.localStorage.setItem(key, value);
+export function peekStorageTarget(): StorageTarget {
+  return currentTarget();
 }

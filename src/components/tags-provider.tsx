@@ -17,6 +17,7 @@ import {
   persistTagRegistry,
 } from "@/lib/tag-registry";
 import {
+  DATA_SYNC_EVENT,
   purgeTagFromAllData,
   replaceTagLabelInAllData,
 } from "@/lib/tag-data-sync";
@@ -61,6 +62,14 @@ export function TagsProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     void refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    const onSynced = () => {
+      void refresh();
+    };
+    window.addEventListener(DATA_SYNC_EVENT, onSynced);
+    return () => window.removeEventListener(DATA_SYNC_EVENT, onSynced);
   }, [refresh]);
 
   const addTag = useCallback(

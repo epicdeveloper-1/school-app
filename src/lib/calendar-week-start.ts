@@ -67,6 +67,13 @@ export async function loadCalendarWeekStart(): Promise<DayKey> {
   return parseCalendarWeekStart(raw);
 }
 
+/** Reload preference from disk after a cloud pull and notify subscribers. */
+export async function reloadCalendarWeekStartFromDisk(): Promise<DayKey> {
+  const day = await loadCalendarWeekStart();
+  for (const listener of listeners) listener(day);
+  return day;
+}
+
 export async function saveCalendarWeekStart(day: DayKey): Promise<void> {
   await writeStorage(CALENDAR_WEEK_START_KEY, day);
   for (const listener of listeners) listener(day);

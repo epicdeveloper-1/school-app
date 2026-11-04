@@ -14,9 +14,12 @@ import {
   reloadRemindersStoreFromDisk,
   type RemindersStore,
 } from "./reminders";
+import { reloadCalendarWeekStartFromDisk } from "./calendar-week-start";
+import { reloadCs234ChecklistFromDisk } from "./cs234-checklist";
 import { readStorage, writeStorage } from "./storage";
 import { reloadDueEventsStoreFromDisk } from "./due-events";
 import { reloadRecurringTodosStoreFromDisk } from "./recurring-todos";
+import { loadTagRegistry } from "./tag-registry";
 import {
   STORAGE_KEY,
   reloadPlansStoreFromDisk,
@@ -33,6 +36,9 @@ export async function reloadAllAppDataStores(): Promise<void> {
   await reloadDueEventsStoreFromDisk();
   await reloadRecurringTodosStoreFromDisk();
   await reloadRemindersStoreFromDisk();
+  await reloadCalendarWeekStartFromDisk();
+  await reloadCs234ChecklistFromDisk();
+  await loadTagRegistry();
   if (typeof window !== "undefined") {
     window.dispatchEvent(new Event(DATA_SYNC_EVENT));
   }

@@ -159,6 +159,17 @@ export async function initCs234ChecklistStore(): Promise<Cs234ChecklistStore> {
   return memoryStore;
 }
 
+/** Reload checklist from disk after a cloud pull (no re-upload). */
+export async function reloadCs234ChecklistFromDisk(): Promise<Cs234ChecklistStore> {
+  if (typeof window === "undefined" || isBlankProfile()) {
+    memoryStore = emptyStore();
+    return memoryStore;
+  }
+  memoryStore = await readStoreFromDisk();
+  notify();
+  return memoryStore;
+}
+
 export function peekCs234Items(): Cs234ChecklistItem[] {
   return memoryStore?.items ? [...memoryStore.items] : [];
 }

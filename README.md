@@ -1,6 +1,8 @@
 # Weekly Strategy
 
-School week planner — set one weekly focus, add daily priorities, and track subject targets. Plans save in the browser (localStorage).
+School week planner — set one weekly focus, add daily priorities, and track subject targets. Plans always save locally (Electron files or browser localStorage).
+
+Optional **Google cloud sync** (personal desktop): add Firebase web keys to `.env.local`, rebuild, then Sign in with Google under Settings. Local writes stay first; Firestore mirrors your account only. Other Google accounts are unaffected.
 
 Also available as a **Windows desktop app** (Electron), same pattern as the Gift/mortgage app setup.
 
@@ -28,8 +30,15 @@ Build once on your PC:
 cd %USERPROFILE%\Projects\school-app
 git pull
 npm install
+```
+
+To enable cloud sync on the personal desktop build, copy `.env.example` to `.env.local`, fill in `NEXT_PUBLIC_FIREBASE_*`, then:
+
+```bat
 npm run dist
 ```
+
+Without Firebase env vars, the installer still works; everything stays on-disk only.
 
 Then open:
 
