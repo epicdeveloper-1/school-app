@@ -74,7 +74,8 @@ export type WeekPlan = {
   /**
    * Manual board box order per day (stable row ids). When absent, the board
    * uses the default tag / optional / done sort. After the user reorders,
-   * this list is remembered for the week.
+   * this list is remembered for the week and checked boxes stay in place
+   * (they are not sunk under Optional).
    */
   dayBoxOrder?: Partial<Record<DayKey, string[]>>;
   /**

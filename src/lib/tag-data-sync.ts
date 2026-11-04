@@ -14,6 +14,7 @@ import {
   reloadRemindersStoreFromDisk,
   type RemindersStore,
 } from "./reminders";
+import { reloadBoardCompletedDisplayFromDisk } from "./board-completed-display";
 import { reloadCalendarWeekStartFromDisk } from "./calendar-week-start";
 import { reloadCs234ChecklistFromDisk } from "./cs234-checklist";
 import { readStorage, writeStorage } from "./storage";
@@ -37,6 +38,7 @@ export async function reloadAllAppDataStores(): Promise<void> {
   await reloadRecurringTodosStoreFromDisk();
   await reloadRemindersStoreFromDisk();
   await reloadCalendarWeekStartFromDisk();
+  await reloadBoardCompletedDisplayFromDisk();
   await reloadCs234ChecklistFromDisk();
   await loadTagRegistry();
   if (typeof window !== "undefined") {

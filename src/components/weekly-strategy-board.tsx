@@ -17,6 +17,8 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Eye,
+  EyeOff,
   Move,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -44,6 +46,12 @@ import {
   normalizeTaskTags,
   taskBodyText,
 } from "@/lib/box-tags";
+import {
+  DEFAULT_BOARD_COMPLETED_DISPLAY,
+  loadBoardCompletedDisplay,
+  subscribeBoardCompletedDisplay,
+  type BoardCompletedDisplay,
+} from "@/lib/board-completed-display";
 import { handleTagChipKey } from "@/lib/tag-chip-key";
 import { DATA_SYNC_EVENT } from "@/lib/tag-data-sync";
 import type { TagChipUndoState } from "@/lib/tag-chip-key";
@@ -649,6 +657,8 @@ type BoardRowLiProps = {
   setDropIndicator: Dispatch<SetStateAction<DropIndicator | null>>;
   onReorder: (fromId: string, toId: string, edge: "before" | "after") => void;
   onContextMenu?: (event: ReactMouseEvent<HTMLLIElement>) => void;
+  /** Optional block rendered before this row (e.g. Completed heading). */
+  header?: ReactNode;
   leading?: ReactNode;
   footer?: ReactNode;
   children: ReactNode;
@@ -667,35 +677,39 @@ function BoardRowLi({
   setDropIndicator,
   onReorder,
   onContextMenu,
+  header,
   leading,
   footer,
   children,
 }: BoardRowLiProps) {
   return (
-    <ReorderRow
-      rowId={rowId}
-      label={label}
-      isMoving={isMoving}
-      dragId={dragTaskId}
-      dragHeight={dragHeight}
-      dropIndicator={dropIndicator}
-      orderedIds={orderedIds}
-      setDragId={setDragTaskId}
-      setDragHeight={setDragHeight}
-      setDropIndicator={setDropIndicator}
-      onReorder={onReorder}
-      onContextMenu={onContextMenu}
-      className="rounded-lg px-1 py-0.5 group"
-      draggingClassName="rounded-lg border-2 border-ink/70 bg-transparent px-1 py-0.5 opacity-35 group"
-    >
-      <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 items-start gap-2">
-          {leading}
-          {children}
+    <>
+      {header}
+      <ReorderRow
+        rowId={rowId}
+        label={label}
+        isMoving={isMoving}
+        dragId={dragTaskId}
+        dragHeight={dragHeight}
+        dropIndicator={dropIndicator}
+        orderedIds={orderedIds}
+        setDragId={setDragTaskId}
+        setDragHeight={setDragHeight}
+        setDropIndicator={setDropIndicator}
+        onReorder={onReorder}
+        onContextMenu={onContextMenu}
+        className="rounded-lg px-1 py-0.5 group"
+        draggingClassName="rounded-lg border-2 border-ink/70 bg-transparent px-1 py-0.5 opacity-35 group"
+      >
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-start gap-2">
+            {leading}
+            {children}
+          </div>
+          {footer}
         </div>
-        {footer}
-      </div>
-    </ReorderRow>
+      </ReorderRow>
+    </>
   );
 }
 
@@ -812,6 +826,12 @@ export function WeeklyStrategyBoard() {
   const [dropIndicator, setDropIndicator] = useState<DropIndicator | null>(
     null,
   );
+  const [completedDisplay, setCompletedDisplay] =
+    useState<BoardCompletedDisplay>(DEFAULT_BOARD_COMPLETED_DISPLAY);
+  /** Per-day: show the Completed section (default hidden). */
+  const [showCompletedByDay, setShowCompletedByDay] = useState<
+    Partial<Record<DayKey, boolean>>
+  >({});
   const [boxMenu, setBoxMenu] = useState<{
     x: number;
     y: number;
@@ -935,6 +955,20 @@ export function WeeklyStrategyBoard() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    void loadBoardCompletedDisplay().then((value) => {
+      if (!cancelled) setCompletedDisplay(value);
+    });
+    const unsub = subscribeBoardCompletedDisplay((value) => {
+      setCompletedDisplay(value);
+    });
+    return () => {
+      cancelled = true;
+      unsub();
+    };
+  }, []);
+
+  useEffect(() => {
     return subscribeDueEvents(() => {
       setDueEvents(peekDueEvents());
       setBoxDone(peekBoxDone());
@@ -1045,8 +1079,21 @@ export function WeeklyStrategyBoard() {
     toId: string,
     edge: "before" | "after",
   ) {
-    const currentIds = sortedDayRows(day).map(boardRowId);
-    const next = reorderIds(currentIds, fromId, toId, edge);
+    const allRows = sortedDayRows(day);
+    const allIds = allRows.map(boardRowId);
+    let next: string[] | null;
+    if (completedDisplay === "collapse") {
+      const activeIds = allRows
+        .filter((row) => !rowSortKey(row).done)
+        .map(boardRowId);
+      const nextActive = reorderIds(activeIds, fromId, toId, edge);
+      if (!nextActive) return;
+      const activeSet = new Set(activeIds);
+      let i = 0;
+      next = allIds.map((id) => (activeSet.has(id) ? nextActive[i++]! : id));
+    } else {
+      next = reorderIds(allIds, fromId, toId, edge);
+    }
     if (!next) return;
     updatePlan((prev) => ({
       ...prev,
@@ -1657,8 +1704,15 @@ export function WeeklyStrategyBoard() {
     for (const item of visibleDayTasksForWeek(targetWeekOf, weekPlan, dayKey)) {
       rows.push({ kind: "task", item, index: index++ });
     }
+    const hasCustomOrder = Boolean(weekPlan.dayBoxOrder?.[dayKey]?.length);
+    // Custom order (and collapse mode) keep checked boxes in place instead of
+    // sinking them under Optional.
+    const sinkDone =
+      !hasCustomOrder && completedDisplay === "always";
     return rows.sort((a, b) =>
-      compareBoardBoxes(rowSortKey(a, weekCs), rowSortKey(b, weekCs)),
+      compareBoardBoxes(rowSortKey(a, weekCs), rowSortKey(b, weekCs), {
+        sinkDone,
+      }),
     );
   };
 
@@ -1704,8 +1758,13 @@ export function WeeklyStrategyBoard() {
       seen.add(id);
       return true;
     });
+    const hasCustomOrder = Boolean(plan.dayBoxOrder?.[dayKey]?.length);
+    const sinkDone =
+      !hasCustomOrder && completedDisplay === "always";
     const defaults = [...native, ...extra].sort((a, b) =>
-      compareBoardBoxes(rowSortKey(a, weekCs), rowSortKey(b, weekCs)),
+      compareBoardBoxes(rowSortKey(a, weekCs), rowSortKey(b, weekCs), {
+        sinkDone,
+      }),
     );
     return applyDayBoxOrder(defaults, plan.dayBoxOrder?.[dayKey]);
   };
@@ -2391,7 +2450,23 @@ export function WeeklyStrategyBoard() {
               estimateMinutes: estimateMinutesFor(row),
             }));
             const isMoving = moveDay === day.key;
-            const orderedIds = dayRows.map(boardRowId);
+            const collapseCompleted = completedDisplay === "collapse";
+            const completedRows = collapseCompleted
+              ? dayRows.filter((row) => rowSortKey(row, csWeek).done)
+              : [];
+            const listRows = collapseCompleted
+              ? dayRows.filter((row) => !rowSortKey(row, csWeek).done)
+              : dayRows;
+            const showCompleted = showCompletedByDay[day.key] === true;
+            const displayRows =
+              collapseCompleted && showCompleted
+                ? [...listRows, ...completedRows]
+                : listRows;
+            const firstCompletedId =
+              collapseCompleted && showCompleted && completedRows[0]
+                ? boardRowId(completedRows[0])
+                : null;
+            const orderedIds = listRows.map(boardRowId);
             const doneCount = dayRows.filter((row) =>
               rowSortKey(row, csWeek).done,
             ).length;
@@ -2421,7 +2496,39 @@ export function WeeklyStrategyBoard() {
                     <span className="text-xs text-muted-foreground">
                       {doneCount}/{totalCount}
                     </span>
-                    {totalCount > 1 && (
+                    {collapseCompleted && completedRows.length > 0 && (
+                      <Button
+                        type="button"
+                        variant={showCompleted ? "secondary" : "ghost"}
+                        size="sm"
+                        onClick={() =>
+                          setShowCompletedByDay((cur) => ({
+                            ...cur,
+                            [day.key]: !showCompleted,
+                          }))
+                        }
+                        aria-pressed={showCompleted}
+                        aria-label={
+                          showCompleted
+                            ? `Hide completed boxes for ${day.label}`
+                            : `Show completed boxes for ${day.label}`
+                        }
+                        title={
+                          showCompleted
+                            ? "Hide completed"
+                            : `Show completed (${completedRows.length})`
+                        }
+                        className="h-7 gap-1 px-2 text-xs"
+                      >
+                        {showCompleted ? (
+                          <EyeOff className="size-3.5" />
+                        ) : (
+                          <Eye className="size-3.5" />
+                        )}
+                        {completedRows.length}
+                      </Button>
+                    )}
+                    {listRows.length > 1 && (
                       <Button
                         type="button"
                         variant={isMoving ? "secondary" : "ghost"}
@@ -2448,15 +2555,23 @@ export function WeeklyStrategyBoard() {
                   <p className="mb-3 text-sm text-muted-foreground">
                     Empty day — keep it light or add one priority.
                   </p>
-                ) : (
+                ) : displayRows.length === 0 && collapseCompleted ? (
+                  <p className="mb-3 text-sm text-muted-foreground">
+                    All boxes completed
+                    {completedRows.length > 0 && !showCompleted
+                      ? " — tap the eye to review them."
+                      : "."}
+                  </p>
+                ) : displayRows.length > 0 ? (
                   <ul className="mb-3 space-y-2">
-                    {dayRows.map((row) => {
+                    {displayRows.map((row) => {
                       const rowId = boardRowId(row);
                       const rowLabel = boardRowLabel(row);
+                      const rowDone = rowSortKey(row, csWeek).done;
                       const rowShell = {
                         rowId,
                         label: rowLabel,
-                        isMoving,
+                        isMoving: isMoving && !(collapseCompleted && rowDone),
                         dragTaskId,
                         dragHeight,
                         dropIndicator,
@@ -2471,6 +2586,15 @@ export function WeeklyStrategyBoard() {
                         ) => reorderBox(day.key, fromId, toId, edge),
                         onContextMenu: (event: ReactMouseEvent<HTMLLIElement>) =>
                           openBoxMenu(event, day.key, row),
+                        header:
+                          firstCompletedId != null &&
+                          rowId === firstCompletedId ? (
+                            <li className="list-none pt-1">
+                              <p className="mb-1 text-xs font-medium tracking-wide text-muted-foreground uppercase">
+                                Completed ({completedRows.length})
+                              </p>
+                            </li>
+                          ) : null,
                       };
                       const subs = subboxesFor(row);
                       const subOpen = openSubs[rowId] === true;
@@ -3240,7 +3364,8 @@ export function WeeklyStrategyBoard() {
                       );
                     })}
                   </ul>
-                )}
+                ) : null}
+
 
                 <div className="mt-auto flex min-w-0 flex-wrap items-center gap-2">
                   {draftTags[day.key].length > 0 && (

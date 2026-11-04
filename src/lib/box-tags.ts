@@ -181,11 +181,15 @@ export function compareBoardBoxes(
 
   },
 
+options?: { sinkDone?: boolean },
+
 ): number {
+
+  const sinkDone = options?.sinkDone !== false;
 
   const tier = (done: boolean, tags: readonly BoxTag[] | undefined) => {
 
-    if (done) return 2;
+    if (sinkDone && done) return 2;
 
     if ((tags ?? []).includes("optional")) return 1;
 

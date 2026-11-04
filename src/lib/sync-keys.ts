@@ -9,6 +9,7 @@ export const SYNC_STORAGE_KEYS = [
   "recurring-todos-v1",
   "box-tags-registry-v1",
   "calendar-week-start-v1",
+  "board-completed-display-v1",
   "cs234-checklist-v1",
 ] as const;
 

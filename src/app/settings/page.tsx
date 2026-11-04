@@ -2,6 +2,7 @@ import type { ComponentType } from "react";
 import Link from "next/link";
 import { AppNav } from "@/components/app-nav";
 import { SettingsIntro, SiteFooter } from "@/components/profile-copy";
+import { BoardSettingsPanel } from "@/components/board-settings-panel";
 import { CalendarSettingsPanel } from "@/components/calendar-settings-panel";
 import { TagSettingsPanel } from "@/components/tag-settings-panel";
 
@@ -47,6 +48,7 @@ export default function SettingsPage() {
         <AccountPanel />
 
         <div className="mt-6 space-y-8">
+          <BoardSettingsPanel />
           <CalendarSettingsPanel />
           <TagSettingsPanel />
         </div>
