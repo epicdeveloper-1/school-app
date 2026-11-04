@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import type { TaskItem } from "@/lib/week-plan";
 import {
   computeDayTimingStats,
+  estClockHhmm,
   formatClockTime,
   formatDuration,
   normalizeClockTime,
@@ -88,6 +89,14 @@ export function DayTimingSummary({
     }
     const normalized = normalizeClockTime(trimmed);
     if (!normalized) return;
+    onFixedStartChange(normalized);
+    setStartDraft(formatClockTime(normalized));
+  }
+
+  function startNow() {
+    const current = new Date();
+    setNow(current);
+    const normalized = estClockHhmm(current);
     onFixedStartChange(normalized);
     setStartDraft(formatClockTime(normalized));
   }
@@ -204,24 +213,35 @@ export function DayTimingSummary({
           </dl>
 
           <div className="mt-3 space-y-2 border-t border-border/60 pt-3">
-            <label className="block">
-              <span className="mb-1 block text-xs text-muted-foreground">
-                Fixed start (EST)
-              </span>
-              <Input
-                value={startDraft}
-                onChange={(e) => setStartDraft(e.target.value)}
-                onBlur={commitStart}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    commitStart();
-                  }
-                }}
-                placeholder="e.g. 2:00 PM"
-                className="h-8 bg-white text-sm"
-              />
-            </label>
+            <div className="space-y-1.5">
+              <label className="block">
+                <span className="mb-1 block text-xs text-muted-foreground">
+                  Fixed start (EST)
+                </span>
+                <Input
+                  value={startDraft}
+                  onChange={(e) => setStartDraft(e.target.value)}
+                  onBlur={commitStart}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      commitStart();
+                    }
+                  }}
+                  placeholder="e.g. 2:00 PM"
+                  className="h-8 bg-white text-sm"
+                />
+              </label>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="w-full"
+                onClick={startNow}
+              >
+                Start now
+              </Button>
+            </div>
             <label className="block">
               <span className="mb-1 block text-xs text-muted-foreground">
                 Breaks

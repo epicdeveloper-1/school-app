@@ -472,6 +472,14 @@ export function estMinutesFromMidnight(date: Date): number {
   return hour * 60 + minute;
 }
 
+/** Wall clock in America/New_York as `HH:mm` 24h. */
+export function estClockHhmm(date: Date = new Date()): string {
+  const mins = estMinutesFromMidnight(date);
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
 export function sumEstimates(tasks: TaskItem[]): number {
   return tasks.reduce((n, t) => n + (t.estimateMinutes ?? 0), 0);
 }
