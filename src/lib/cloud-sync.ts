@@ -127,7 +127,15 @@ export function whenCloudSyncReady(): Promise<void> {
 async function mirrorKey(key: SyncStorageKey, value: string): Promise<void> {
   const result = await writeCloudStorage(key, value);
   if (result === "skipped") {
-    syncLog("push skipped", key);
+    syncLog("push skipped (sparse vs cloud)", key);
+    await setSyncStatus({
+      lastError:
+        "Cloud push skipped: this device’s copy looked emptier than cloud (protecting your backup).",
+    });
+    emitStatus({
+      lastError:
+        "Cloud push skipped: this device’s copy looked emptier than cloud (protecting your backup).",
+    });
     return;
   }
   const meta = await loadSyncMeta();
@@ -237,14 +245,31 @@ async function applyRemoteBlobs(
       const lastApplied = keyMeta?.lastAppliedCloudAt ?? null;
       const cloudAt = blob.updatedAtMs ?? 0;
       const local = await readLocalStorageValue(key);
+      const localLen = local?.length ?? 0;
+      const cloudLen = blob.value.length;
 
       if (local === blob.value) {
+        syncLog("same", key, {
+          bytes: cloudLen,
+          cloudAt,
+          profile: blob.clientProfile,
+        });
         meta.keys[key] = {
           localUpdatedAt: keyMeta?.localUpdatedAt ?? (cloudAt || Date.now()),
           lastAppliedCloudAt: cloudAt || keyMeta?.lastAppliedCloudAt || null,
         };
         continue;
       }
+
+      syncLog("diff", key, {
+        localLen,
+        cloudLen,
+        cloudAt,
+        localUpdatedAt,
+        lastApplied,
+        profile: blob.clientProfile,
+        mode,
+      });
 
       if (mode === "force") {
         syncLog("force-apply", key, "cloudAt", cloudAt);

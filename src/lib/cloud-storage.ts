@@ -11,10 +11,7 @@ import {
 } from "firebase/firestore";
 import { getAppProfile, type AppProfile } from "./app-profile";
 import { getFirebaseAuth, getFirebaseDb } from "./firebase-client";
-import {
-  blankMayOverwriteProfile,
-  localIsTooSparseForCloud,
-} from "./sync-guard";
+import { localIsTooSparseForCloud } from "./sync-guard";
 
 /** Firestore document ids cannot contain slashes. Match the desktop filename filter. */
 export function blobDocumentId(key: string): string {
@@ -81,8 +78,10 @@ export async function readCloudBlob(key: string): Promise<CloudBlob | null> {
 }
 
 /**
- * Mirror a local value to Firestore. Skips when a blank client would clobber
- * personal data, or when local is clearly emptier than existing cloud.
+ * Mirror a local value to Firestore.
+ * Skips only when local is clearly an empty/seed shell vs richer cloud
+ * (prevents blank wipe). Real edits from blank or personal both sync.
+ * Once a blob is personal-tagged, keep that tag even if blank writes.
  */
 export async function writeCloudStorage(
   key: string,
@@ -94,14 +93,6 @@ export async function writeCloudStorage(
     (await getDoc(ref)).data() as Record<string, unknown> | undefined,
   );
 
-  if (existing && !blankMayOverwriteProfile(existing.clientProfile)) {
-    console.warn(
-      "cloud write skipped: blank client cannot overwrite personal blob",
-      key,
-    );
-    return "skipped";
-  }
-
   if (existing && localIsTooSparseForCloud(value, existing.value)) {
     console.warn(
       "cloud write skipped: local blob too sparse vs cloud",
@@ -110,10 +101,13 @@ export async function writeCloudStorage(
     return "skipped";
   }
 
+  const profile: AppProfile =
+    existing?.clientProfile === "personal" ? "personal" : getAppProfile();
+
   await setDoc(ref, {
     value,
     updatedAt: serverTimestamp(),
-    clientProfile: getAppProfile(),
+    clientProfile: profile,
   });
   return "written";
 }

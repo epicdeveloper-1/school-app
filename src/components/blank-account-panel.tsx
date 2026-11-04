@@ -49,9 +49,9 @@ export function BlankAccountPanel() {
         is stored for this account and cached in this browser.
       </p>
       <p className="mt-2 text-sm text-muted-foreground">
-        This is the blank friend site. It will not overwrite a personal desktop
-        backup. For the full Weekly Strategy UI on phone, use the personal web
-        link from the deploy (Hosting channel <code className="text-xs">personal</code>).
+        Friend blank site — real edits sync when signed in; empty seed data will
+        not overwrite a richer personal backup. For the full CS234 UI, use the
+        personal Hosting channel from the deploy summary.
       </p>
       {status?.lastSyncAt != null ? (
         <p className="mt-2 text-xs text-muted-foreground">

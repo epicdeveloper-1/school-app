@@ -56,11 +56,12 @@ export function localIsTooSparseForCloud(
   return localScore < cloudScore * 0.5;
 }
 
-/** Blank clients must not overwrite blobs written by the personal app. */
+/**
+ * @deprecated Sparse-local checks replaced the hard blank/personal write block
+ * so real mobile edits can sync. Kept for any residual callers.
+ */
 export function blankMayOverwriteProfile(
-  existingProfile: AppProfile | null | undefined,
+  _existingProfile: AppProfile | null | undefined,
 ): boolean {
-  if (getAppProfile() !== "blank") return true;
-  if (existingProfile === "personal") return false;
   return true;
 }
