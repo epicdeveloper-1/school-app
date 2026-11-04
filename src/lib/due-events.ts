@@ -740,8 +740,9 @@ export async function initDueEventsStore(): Promise<DueEventsStore> {
   if (typeof window === "undefined") return emptyStore();
   if (memoryStore) return memoryStore;
 
+  // Read only — do not persist on init. A write here bumps sync meta and
+  // makes local LWW-win over newer cloud on every refresh/restart.
   memoryStore = await readStoreFromDisk();
-  await persist();
   return memoryStore;
 }
 

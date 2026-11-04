@@ -153,8 +153,8 @@ export async function initCs234ChecklistStore(): Promise<Cs234ChecklistStore> {
     return memoryStore;
   }
   if (memoryStore) return memoryStore;
+  // Read only — persisting on init fights cloud pull (see due-events init).
   memoryStore = await readStoreFromDisk();
-  await persist();
   notify();
   return memoryStore;
 }

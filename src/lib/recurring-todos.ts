@@ -197,8 +197,9 @@ export async function initRecurringTodosStore(): Promise<RecurringTodosStore> {
   ) {
     memoryStore.todos = buildRecurringTodoSeed();
     memoryStore.seedVersion = RECURRING_TODOS_SEED_VERSION;
+    // Only persist when we actually seeded — not on every cold load.
+    await persist();
   }
-  await persist();
   return memoryStore;
 }
 

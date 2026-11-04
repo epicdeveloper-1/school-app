@@ -116,12 +116,15 @@ export function whenCloudSyncReady(): Promise<void> {
 }
 
 async function mirrorKey(key: SyncStorageKey, value: string): Promise<void> {
-  await writeCloudStorage(key, value);
+  const result = await writeCloudStorage(key, value);
+  if (result === "skipped") return;
   const meta = await loadSyncMeta();
   const now = Date.now();
+  // Treat a successful push as applied so the echo snapshot does not
+  // LWW-fight and re-upload on every refresh.
   meta.keys[key] = {
     localUpdatedAt: meta.keys[key]?.localUpdatedAt ?? now,
-    lastAppliedCloudAt: meta.keys[key]?.lastAppliedCloudAt ?? null,
+    lastAppliedCloudAt: now,
   };
   meta.lastSyncAt = now;
   meta.lastError = null;
@@ -216,15 +219,26 @@ async function applyRemoteBlobs(blobs: Map<string, CloudBlob>): Promise<void> {
       const lastApplied = keyMeta?.lastAppliedCloudAt ?? null;
       const cloudAt = blob.updatedAtMs ?? 0;
 
-      if (lastApplied != null && cloudAt <= lastApplied) continue;
-
       const local = await readLocalStorageValue(key);
+
+      // Same bytes — adopt cloud clock, never re-push.
+      if (local === blob.value) {
+        meta.keys[key] = {
+          localUpdatedAt: keyMeta?.localUpdatedAt ?? Date.now(),
+          lastAppliedCloudAt: cloudAt || keyMeta?.lastAppliedCloudAt || Date.now(),
+        };
+        continue;
+      }
+
+      if (lastApplied != null && cloudAt > 0 && cloudAt <= lastApplied) {
+        continue;
+      }
 
       // Sparse local must not LWW-win over richer cloud (blank seed wipe path).
       if (localIsTooSparseForCloud(local, blob.value)) {
         await writeLocalStorageValue(key, blob.value);
         meta.keys[key] = {
-          localUpdatedAt: Date.now(),
+          localUpdatedAt: cloudAt || Date.now(),
           lastAppliedCloudAt: blob.updatedAtMs,
         };
         changed = true;
@@ -232,7 +246,7 @@ async function applyRemoteBlobs(blobs: Map<string, CloudBlob>): Promise<void> {
       }
 
       if (cloudAt && localUpdatedAt && cloudAt <= localUpdatedAt) {
-        // Local is newer or equal — push local instead of applying stale cloud.
+        // Local is newer — push only when content actually differs.
         if (local != null) {
           try {
             await writeCloudStorage(key, local);
@@ -243,17 +257,9 @@ async function applyRemoteBlobs(blobs: Map<string, CloudBlob>): Promise<void> {
         continue;
       }
 
-      if (local === blob.value) {
-        meta.keys[key] = {
-          localUpdatedAt: keyMeta?.localUpdatedAt ?? Date.now(),
-          lastAppliedCloudAt: blob.updatedAtMs,
-        };
-        continue;
-      }
-
       await writeLocalStorageValue(key, blob.value);
       meta.keys[key] = {
-        localUpdatedAt: Date.now(),
+        localUpdatedAt: cloudAt || Date.now(),
         lastAppliedCloudAt: blob.updatedAtMs,
       };
       changed = true;

@@ -885,12 +885,18 @@ export function WeeklyStrategyBoard() {
 
   const planWeekRef = useRef<string | null>(null);
   planWeekRef.current = plan?.weekOf ?? null;
+  /** Skip autosave when plan only mirrors disk/cloud (refresh + pull). */
+  const lastAutosavedPlanJsonRef = useRef<string | null>(null);
 
   useEffect(() => {
     async function onDataSynced() {
       const week = planWeekRef.current ?? formatWeekOf(startOfWeek());
       const stored = await loadPlan(week);
-      if (stored) setPlan(normalizePlan(stored));
+      if (stored) {
+        const normalized = normalizePlan(stored);
+        lastAutosavedPlanJsonRef.current = JSON.stringify(normalized);
+        setPlan(normalized);
+      }
       setDueEvents(await listDueEvents());
       setRecurringTodos(await listRecurringTodos());
       setReminders(await listReminders());
@@ -903,6 +909,14 @@ export function WeeklyStrategyBoard() {
   useEffect(() => {
     if (!plan || loadState !== "ready") return;
     cachePlan(plan);
+    const json = JSON.stringify(plan);
+    // First hydration after load/pull: remember snapshot, do not writeStorage.
+    if (lastAutosavedPlanJsonRef.current === null) {
+      lastAutosavedPlanJsonRef.current = json;
+      return;
+    }
+    if (json === lastAutosavedPlanJsonRef.current) return;
+    lastAutosavedPlanJsonRef.current = json;
     void savePlan(plan);
     setSavedFlash(true);
     const t = window.setTimeout(() => setSavedFlash(false), 1200);
