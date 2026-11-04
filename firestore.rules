@@ -11,10 +11,11 @@ service cloud.firestore {
       allow create, update: if request.auth != null
         && request.auth.uid == userId
         && blobId.matches('^[A-Za-z0-9._-]{1,700}$')
-        && request.resource.data.keys().hasOnly(['value', 'updatedAt'])
+        && request.resource.data.keys().hasOnly(['value', 'updatedAt', 'clientProfile'])
         && request.resource.data.value is string
         && request.resource.data.value.size() < 900000
-        && request.resource.data.updatedAt == request.time;
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.clientProfile in ['personal', 'blank'];
 
       allow delete: if false;
     }
