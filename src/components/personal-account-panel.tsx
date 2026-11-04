@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import { Button } from "@/components/ui/button";
 import {
+  forcePullFromCloud,
   subscribeSyncStatus,
   type SyncStatusSnapshot,
 } from "@/lib/cloud-sync";
@@ -88,22 +89,42 @@ export function PersonalAccountPanel() {
       ) : null}
       <div className="mt-4 flex flex-wrap gap-2">
         {email ? (
-          <Button
-            type="button"
-            variant="outline"
-            disabled={pending}
-            onClick={() => {
-              setPending(true);
-              setError(null);
-              void signOut(getFirebaseAuth())
-                .catch(() => {
-                  setError("Could not sign out. Try again.");
-                })
-                .finally(() => setPending(false));
-            }}
-          >
-            {pending ? "Signing out…" : "Sign out"}
-          </Button>
+          <>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={pending}
+              onClick={() => {
+                setPending(true);
+                setError(null);
+                void forcePullFromCloud()
+                  .catch((err: unknown) => {
+                    setError(
+                      err instanceof Error ? err.message : "Pull failed.",
+                    );
+                  })
+                  .finally(() => setPending(false));
+              }}
+            >
+              {pending ? "Working…" : "Pull from cloud"}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={pending}
+              onClick={() => {
+                setPending(true);
+                setError(null);
+                void signOut(getFirebaseAuth())
+                  .catch(() => {
+                    setError("Could not sign out. Try again.");
+                  })
+                  .finally(() => setPending(false));
+              }}
+            >
+              {pending ? "Signing out…" : "Sign out"}
+            </Button>
+          </>
         ) : (
           <Button
             type="button"

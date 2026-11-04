@@ -3,6 +3,7 @@ import type { Unsubscribe as FsUnsubscribe } from "firebase/firestore";
 import { isBlankProfile } from "./app-profile";
 import {
   blobDocumentId,
+  fetchAllUserBlobs,
   readCloudBlob,
   subscribeUserBlobs,
   writeCloudStorage,
@@ -27,6 +28,9 @@ import { reloadAllAppDataStores } from "./tag-data-sync";
 
 export const SYNC_STATUS_EVENT = "weekly-strategy:sync-status";
 
+/** Allow local clock to be slightly ahead of Firestore server time. */
+const CLOCK_SKEW_MS = 15_000;
+
 export type SyncStatusSnapshot = {
   email: string | null;
   uid: string | null;
@@ -43,6 +47,11 @@ let readyResolvers: Array<() => void> = [];
 let initialReady = false;
 
 const listeners = new Set<(status: SyncStatusSnapshot) => void>();
+
+function syncLog(...args: unknown[]): void {
+  if (typeof console === "undefined") return;
+  console.info("[weekly-strategy:sync]", ...args);
+}
 
 function emitStatus(partial?: Partial<SyncStatusSnapshot>): void {
   const user = isFirebaseConfigured()
@@ -117,18 +126,22 @@ export function whenCloudSyncReady(): Promise<void> {
 
 async function mirrorKey(key: SyncStorageKey, value: string): Promise<void> {
   const result = await writeCloudStorage(key, value);
-  if (result === "skipped") return;
+  if (result === "skipped") {
+    syncLog("push skipped", key);
+    return;
+  }
   const meta = await loadSyncMeta();
   const now = Date.now();
-  // Treat a successful push as applied so the echo snapshot does not
-  // LWW-fight and re-upload on every refresh.
+  // Do NOT set lastAppliedCloudAt to client Date.now() — that can sit ahead of
+  // Firestore server times and block every later pull.
   meta.keys[key] = {
     localUpdatedAt: meta.keys[key]?.localUpdatedAt ?? now,
-    lastAppliedCloudAt: now,
+    lastAppliedCloudAt: meta.keys[key]?.lastAppliedCloudAt ?? null,
   };
   meta.lastSyncAt = now;
   meta.lastError = null;
   await saveSyncMeta(meta);
+  syncLog("pushed", key, "bytes", value.length);
   emitStatus({ lastSyncAt: now, lastError: null, syncing });
 }
 
@@ -140,7 +153,7 @@ async function pullAllCloudBlobs(meta: SyncMetaStore): Promise<boolean> {
       if (!blob) continue;
       await writeLocalStorageValue(key, blob.value);
       meta.keys[key] = {
-        localUpdatedAt: Date.now(),
+        localUpdatedAt: blob.updatedAtMs ?? Date.now(),
         lastAppliedCloudAt: blob.updatedAtMs,
       };
       applied = true;
@@ -173,19 +186,18 @@ async function firstLink(uid: string, meta: SyncMetaStore): Promise<boolean> {
         cloudHasRicher = true;
         break;
       }
-      // Any personal-tagged cloud blob: blank should adopt cloud, not push seed.
       if (blob.clientProfile === "personal") {
         cloudHasRicher = true;
         break;
       }
     }
     if (!cloudHasRicher) {
-      // Blank with only local seed and empty cloud — ok to push (friend start).
       preferPull = false;
     }
   }
 
   if (hasLocal && !preferPull) {
+    syncLog("firstLink push local", uid, "keys", locals.size);
     for (const [key, value] of locals) {
       await writeCloudStorage(key, value);
       const now = Date.now();
@@ -195,6 +207,7 @@ async function firstLink(uid: string, meta: SyncMetaStore): Promise<boolean> {
       };
     }
   } else {
+    syncLog("firstLink pull cloud", uid);
     await pullAllCloudBlobs(meta);
   }
 
@@ -205,7 +218,12 @@ async function firstLink(uid: string, meta: SyncMetaStore): Promise<boolean> {
   return true;
 }
 
-async function applyRemoteBlobs(blobs: Map<string, CloudBlob>): Promise<void> {
+type ApplyMode = "normal" | "force";
+
+async function applyRemoteBlobs(
+  blobs: Map<string, CloudBlob>,
+  mode: ApplyMode = "normal",
+): Promise<void> {
   const meta = await loadSyncMeta();
   let changed = false;
 
@@ -218,24 +236,18 @@ async function applyRemoteBlobs(blobs: Map<string, CloudBlob>): Promise<void> {
       const localUpdatedAt = keyMeta?.localUpdatedAt ?? 0;
       const lastApplied = keyMeta?.lastAppliedCloudAt ?? null;
       const cloudAt = blob.updatedAtMs ?? 0;
-
       const local = await readLocalStorageValue(key);
 
-      // Same bytes — adopt cloud clock, never re-push.
       if (local === blob.value) {
         meta.keys[key] = {
-          localUpdatedAt: keyMeta?.localUpdatedAt ?? Date.now(),
-          lastAppliedCloudAt: cloudAt || keyMeta?.lastAppliedCloudAt || Date.now(),
+          localUpdatedAt: keyMeta?.localUpdatedAt ?? (cloudAt || Date.now()),
+          lastAppliedCloudAt: cloudAt || keyMeta?.lastAppliedCloudAt || null,
         };
         continue;
       }
 
-      if (lastApplied != null && cloudAt > 0 && cloudAt <= lastApplied) {
-        continue;
-      }
-
-      // Sparse local must not LWW-win over richer cloud (blank seed wipe path).
-      if (localIsTooSparseForCloud(local, blob.value)) {
+      if (mode === "force") {
+        syncLog("force-apply", key, "cloudAt", cloudAt);
         await writeLocalStorageValue(key, blob.value);
         meta.keys[key] = {
           localUpdatedAt: cloudAt || Date.now(),
@@ -245,18 +257,49 @@ async function applyRemoteBlobs(blobs: Map<string, CloudBlob>): Promise<void> {
         continue;
       }
 
-      if (cloudAt && localUpdatedAt && cloudAt <= localUpdatedAt) {
-        // Local is newer — push only when content actually differs.
-        if (local != null) {
-          try {
-            await writeCloudStorage(key, local);
-          } catch (err) {
-            console.error("push newer local failed", key, err);
-          }
+      if (localIsTooSparseForCloud(local, blob.value)) {
+        syncLog("apply sparse→cloud", key);
+        await writeLocalStorageValue(key, blob.value);
+        meta.keys[key] = {
+          localUpdatedAt: cloudAt || Date.now(),
+          lastAppliedCloudAt: blob.updatedAtMs,
+        };
+        changed = true;
+        continue;
+      }
+
+      // Cloud is clearly newer than last applied server stamp.
+      const cloudNewerThanApplied =
+        cloudAt > 0 && (lastApplied == null || cloudAt > lastApplied);
+      // Local edit only wins when clearly ahead of cloud (skew-tolerant).
+      const localClearlyNewer =
+        localUpdatedAt > 0 &&
+        cloudAt > 0 &&
+        localUpdatedAt > cloudAt + CLOCK_SKEW_MS;
+
+      if (cloudNewerThanApplied && !localClearlyNewer) {
+        syncLog("apply cloud", key, { cloudAt, localUpdatedAt, lastApplied });
+        await writeLocalStorageValue(key, blob.value);
+        meta.keys[key] = {
+          localUpdatedAt: cloudAt || Date.now(),
+          lastAppliedCloudAt: blob.updatedAtMs,
+        };
+        changed = true;
+        continue;
+      }
+
+      if (localClearlyNewer && local != null) {
+        syncLog("keep local / push", key, { cloudAt, localUpdatedAt });
+        try {
+          await writeCloudStorage(key, local);
+        } catch (err) {
+          console.error("push newer local failed", key, err);
         }
         continue;
       }
 
+      // Ambiguous clocks, different content — prefer cloud so refresh picks up peers.
+      syncLog("apply cloud (tie→cloud)", key, { cloudAt, localUpdatedAt, lastApplied });
       await writeLocalStorageValue(key, blob.value);
       meta.keys[key] = {
         localUpdatedAt: cloudAt || Date.now(),
@@ -270,7 +313,40 @@ async function applyRemoteBlobs(blobs: Map<string, CloudBlob>): Promise<void> {
   meta.lastError = null;
   await saveSyncMeta(meta);
   emitStatus({ lastSyncAt: meta.lastSyncAt, lastError: null, syncing });
-  if (changed) await reloadAllAppDataStores();
+  if (changed) {
+    syncLog("reload UI after apply");
+    await reloadAllAppDataStores();
+  } else {
+    syncLog("apply: no local changes");
+  }
+}
+
+/**
+ * Overwrite local planner blobs from Firestore (diagnostic / recovery).
+ * Use after editing on another device when refresh did not pick up changes.
+ */
+export async function forcePullFromCloud(): Promise<void> {
+  if (!isFirebaseConfigured()) {
+    throw new Error("Firebase is not configured.");
+  }
+  const user = getFirebaseAuth().currentUser;
+  if (!user) throw new Error("Sign in required.");
+
+  syncing = true;
+  emitStatus({ syncing: true, lastError: null });
+  try {
+    const blobs = await fetchAllUserBlobs();
+    syncLog("forcePull", "docs", blobs.size);
+    await applyRemoteBlobs(blobs, "force");
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Pull failed.";
+    await setSyncStatus({ lastError: message });
+    emitStatus({ lastError: message, syncing: false });
+    throw err;
+  } finally {
+    syncing = false;
+    emitStatus({ syncing: false });
+  }
 }
 
 async function stopBlobSubscription(): Promise<void> {
@@ -291,12 +367,22 @@ async function startForUser(uid: string, email: string | null): Promise<void> {
     const meta = await loadSyncMeta();
     await firstLink(uid, meta);
 
+    // Always reconcile once from the server before listening — firstLink is
+    // skipped after the first sign-in, which previously left pulls to LWW only.
+    try {
+      const blobs = await fetchAllUserBlobs();
+      syncLog("startup reconcile", "docs", blobs.size);
+      await applyRemoteBlobs(blobs, "normal");
+    } catch (err) {
+      console.error("startup reconcile failed", err);
+    }
+
     await stopBlobSubscription();
     setCloudMirror(mirrorKey);
 
     blobsUnsub = subscribeUserBlobs(
       (blobs) => {
-        void applyRemoteBlobs(blobs).catch(async (err) => {
+        void applyRemoteBlobs(blobs, "normal").catch(async (err) => {
           console.error("apply remote blobs failed", err);
           await setSyncStatus({
             lastError: err instanceof Error ? err.message : "Sync failed.",

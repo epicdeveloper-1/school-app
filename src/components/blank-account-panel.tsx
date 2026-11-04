@@ -5,6 +5,7 @@ import { onAuthStateChanged, signOut } from "firebase/auth";
 import { Button } from "@/components/ui/button";
 import { useIsCloudProfile } from "@/components/profile-copy";
 import {
+  forcePullFromCloud,
   subscribeSyncStatus,
   type SyncStatusSnapshot,
 } from "@/lib/cloud-sync";
@@ -63,23 +64,42 @@ export function BlankAccountPanel() {
           {error ?? status?.lastError}
         </p>
       ) : null}
-      <Button
-        type="button"
-        variant="outline"
-        className="mt-4"
-        disabled={pending}
-        onClick={() => {
-          setPending(true);
-          setError(null);
-          void signOut(getFirebaseAuth())
-            .catch(() => {
-              setError("Could not sign out. Try again.");
-              setPending(false);
-            });
-        }}
-      >
-        {pending ? "Signing out…" : "Sign out"}
-      </Button>
+      <div className="mt-4 flex flex-wrap gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          disabled={pending}
+          onClick={() => {
+            setPending(true);
+            setError(null);
+            void forcePullFromCloud()
+              .catch((err: unknown) => {
+                setError(err instanceof Error ? err.message : "Pull failed.");
+              })
+              .finally(() => setPending(false));
+          }}
+        >
+          {pending ? "Working…" : "Pull from cloud"}
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          disabled={pending}
+          onClick={() => {
+            setPending(true);
+            setError(null);
+            void signOut(getFirebaseAuth())
+              .catch(() => {
+                setError("Could not sign out. Try again.");
+              })
+              .finally(() => {
+                setPending(false);
+              });
+          }}
+        >
+          Sign out
+        </Button>
+      </div>
     </section>
   );
 }

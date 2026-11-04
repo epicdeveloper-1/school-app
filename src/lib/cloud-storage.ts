@@ -2,6 +2,7 @@ import {
   collection,
   doc,
   getDoc,
+  getDocs,
   onSnapshot,
   serverTimestamp,
   setDoc,
@@ -117,6 +118,29 @@ export async function writeCloudStorage(
   return "written";
 }
 
+function blobsFromSnapshot(
+  docs: { id: string; data: () => Record<string, unknown> }[],
+): Map<string, CloudBlob> {
+  const next = new Map<string, CloudBlob>();
+  for (const docSnap of docs) {
+    const blob = blobFromData(docSnap.data());
+    if (blob) next.set(docSnap.id, blob);
+  }
+  return next;
+}
+
+/** One-shot server read of all planner blobs (bypass listener timing). */
+export async function fetchAllUserBlobs(): Promise<Map<string, CloudBlob>> {
+  const uid = requireUid();
+  const snap = await getDocs(collection(getFirebaseDb(), "users", uid, "blobs"));
+  return blobsFromSnapshot(
+    snap.docs.map((d) => ({
+      id: d.id,
+      data: () => d.data() as Record<string, unknown>,
+    })),
+  );
+}
+
 /** Live map of blob id → payload for the signed-in user. */
 export function subscribeUserBlobs(
   onChange: (blobs: Map<string, CloudBlob>) => void,
@@ -126,12 +150,14 @@ export function subscribeUserBlobs(
   return onSnapshot(
     collection(getFirebaseDb(), "users", uid, "blobs"),
     (snap) => {
-      const next = new Map<string, CloudBlob>();
-      for (const docSnap of snap.docs) {
-        const blob = blobFromData(docSnap.data() as Record<string, unknown>);
-        if (blob) next.set(docSnap.id, blob);
-      }
-      onChange(next);
+      onChange(
+        blobsFromSnapshot(
+          snap.docs.map((d) => ({
+            id: d.id,
+            data: () => d.data() as Record<string, unknown>,
+          })),
+        ),
+      );
     },
     (err) => {
       onError?.(err instanceof Error ? err : new Error(String(err)));
