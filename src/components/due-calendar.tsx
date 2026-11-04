@@ -65,6 +65,31 @@ import {
   formatDuration,
   parseDuration,
 } from "@/lib/task-time";
+import {
+  CALENDAR_EDIT_KEY,
+  clearEditDraft,
+  peekEditDraft,
+  putEditDraft,
+} from "@/lib/edit-draft-cache";
+
+type CalendarEditPersist = {
+  draft: Draft;
+  baseline: Draft;
+  selectedDate: string;
+  monthKey: string;
+};
+
+function cloneDraft(draft: Draft): Draft {
+  return {
+    ...draft,
+    excludedDates: [...draft.excludedDates],
+    customOccurrences: draft.customOccurrences.map((o) => ({ ...o })),
+    rules: draft.rules.map((r) => ({
+      ...r,
+      tags: [...(r.tags ?? [])],
+    })),
+  };
+}
 
 type DraftOccurrence = {
   /** Client-only key for list editing. */
@@ -317,11 +342,25 @@ export function DueCalendar() {
   const personal = useHasPersonalFeatures();
   const { tags } = useTags();
   const courses = useMemo(() => listDueCourses(), [tags]);
+  const cachedEdit = useMemo(
+    () => peekEditDraft<CalendarEditPersist>(CALENDAR_EDIT_KEY),
+    [],
+  );
+  const restoredFromCacheRef = useRef(!!cachedEdit?.draft);
   const [events, setEvents] = useState<DueEvent[]>([]);
   const [ready, setReady] = useState(false);
-  const [monthKey, setMonthKey] = useState(() => monthKeyFromDate());
-  const [selectedDate, setSelectedDate] = useState(() => todayDateString());
-  const [draft, setDraft] = useState<Draft | null>(null);
+  const [monthKey, setMonthKey] = useState(
+    () => cachedEdit?.monthKey ?? monthKeyFromDate(),
+  );
+  const [selectedDate, setSelectedDate] = useState(
+    () => cachedEdit?.selectedDate ?? todayDateString(),
+  );
+  const [draft, setDraft] = useState<Draft | null>(
+    () => cachedEdit?.draft ?? null,
+  );
+  const [baseline, setBaseline] = useState<Draft | null>(
+    () => cachedEdit?.baseline ?? null,
+  );
   const [saving, setSaving] = useState(false);
   const [deepLinkHandled, setDeepLinkHandled] = useState(false);
   const [query, setQuery] = useState("");
@@ -343,6 +382,19 @@ export function DueCalendar() {
     );
   }, [courses]);
 
+  useEffect(() => {
+    if (!draft) {
+      clearEditDraft(CALENDAR_EDIT_KEY);
+      return;
+    }
+    putEditDraft<CalendarEditPersist>(CALENDAR_EDIT_KEY, {
+      draft,
+      baseline: baseline ?? draft,
+      selectedDate,
+      monthKey,
+    });
+  }, [draft, baseline, selectedDate, monthKey]);
+
   async function refresh() {
     const list = await listDueEvents();
     setEvents(list);
@@ -363,6 +415,10 @@ export function DueCalendar() {
 
   useEffect(() => {
     if (!ready || deepLinkHandled || events.length === 0) return;
+    if (restoredFromCacheRef.current) {
+      setDeepLinkHandled(true);
+      return;
+    }
     const params = new URLSearchParams(window.location.search);
     const eventId = params.get("event");
     const date = params.get("date");
@@ -379,7 +435,9 @@ export function DueCalendar() {
       date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : master.date;
     setSelectedDate(instanceDate);
     setMonthKey(monthKeyFromDate(new Date(`${instanceDate}T12:00:00`)));
-    setDraft(draftFromEvent(master, instanceDate));
+    const next = draftFromEvent(master, instanceDate);
+    setBaseline(cloneDraft(next));
+    setDraft(next);
     setDeepLinkHandled(true);
   }, [ready, events, deepLinkHandled]);
 
@@ -525,9 +583,20 @@ export function DueCalendar() {
 
   const today = todayDateString();
 
+  function closeDraft() {
+    setDraft(null);
+    setBaseline(null);
+    clearEditDraft(CALENDAR_EDIT_KEY);
+  }
+
+  /** Discard the in-memory draft and leave the editor (nothing was persisted). */
+  function cancelDraft() {
+    closeDraft();
+  }
+
   function selectDay(date: string) {
     setSelectedDate(date);
-    setDraft(null);
+    closeDraft();
   }
 
   function toggleCourse(course: DueCourse) {
@@ -549,13 +618,15 @@ export function DueCalendar() {
     setSelectedDate(event.instanceDate);
     setMonthKey(monthKeyFromDate(new Date(`${event.instanceDate}T12:00:00`)));
     const master = findEventById(events, event.seriesId) ?? event;
-    setDraft(draftFromEvent(master, event.instanceDate));
+    const next = draftFromEvent(master, event.instanceDate);
+    setBaseline(cloneDraft(next));
+    setDraft(next);
   }
 
   function jumpToDate(date: string) {
     setSelectedDate(date);
     setMonthKey(monthKeyFromDate(new Date(`${date}T12:00:00`)));
-    setDraft(null);
+    closeDraft();
   }
 
   function shiftMatch(delta: number) {
@@ -580,19 +651,25 @@ export function DueCalendar() {
 
   function openNew() {
     courseTagUndoRef.current = null;
-    setDraft(emptyDraft(selectedDate));
+    const next = emptyDraft(selectedDate);
+    setBaseline(cloneDraft(next));
+    setDraft(next);
   }
 
   function openEdit(event: DueEventInstance) {
     const master = findEventById(events, event.seriesId) ?? event;
-    setDraft(draftFromEvent(master, event.instanceDate));
+    const next = draftFromEvent(master, event.instanceDate);
+    setBaseline(cloneDraft(next));
+    setDraft(next);
   }
 
   function openSpan(seriesId: string, instanceDate: string) {
     const master = findEventById(events, seriesId);
     if (!master) return;
     setSelectedDate(instanceDate);
-    setDraft(draftFromEvent(master, instanceDate));
+    const next = draftFromEvent(master, instanceDate);
+    setBaseline(cloneDraft(next));
+    setDraft(next);
   }
 
   async function handleSave() {
@@ -602,7 +679,7 @@ export function DueCalendar() {
       await saveDueEvent(draftPayload(draft, false));
       await refresh();
       setSelectedDate(draft.date);
-      setDraft(null);
+      closeDraft();
     } finally {
       setSaving(false);
     }
@@ -617,7 +694,9 @@ export function DueCalendar() {
       await refresh();
       setSelectedDate(saved.date);
       setMonthKey(monthKeyFromDate(new Date(`${saved.date}T12:00:00`)));
-      setDraft(draftFromEvent(saved));
+      const next = draftFromEvent(saved);
+      setBaseline(cloneDraft(next));
+      setDraft(next);
     } finally {
       setSaving(false);
     }
@@ -630,7 +709,7 @@ export function DueCalendar() {
     try {
       await deleteDueEvent(id);
       await refresh();
-      setDraft(null);
+      closeDraft();
     } finally {
       setSaving(false);
     }
@@ -642,7 +721,7 @@ export function DueCalendar() {
     try {
       await excludeEventOccurrence(draft.id, draft.instanceDate);
       await refresh();
-      setDraft(null);
+      closeDraft();
     } finally {
       setSaving(false);
     }
@@ -1141,7 +1220,7 @@ export function DueCalendar() {
                   variant="ghost"
                   size="icon-sm"
                   aria-label="Close editor"
-                  onClick={() => setDraft(null)}
+                  onClick={closeDraft}
                 >
                   <X />
                 </Button>
@@ -1849,6 +1928,15 @@ export function DueCalendar() {
                   className="bg-seafoam text-white hover:bg-seafoam/90"
                 >
                   Save
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={cancelDraft}
+                  disabled={saving}
+                >
+                  Cancel
                 </Button>
                 {canRemoveOccurrence && (
                   <Button

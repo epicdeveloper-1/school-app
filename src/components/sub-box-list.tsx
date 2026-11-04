@@ -4,11 +4,25 @@ import { useEffect, useRef, useState } from "react";
 import { ChevronRight } from "lucide-react";
 import { BoxText } from "@/components/box-text";
 import { handleTaskLinkKey } from "@/components/task-link-key";
+import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import {
+  SUBBOX_EDIT_KEY,
+  clearEditDraft,
+  peekEditDraft,
+  putEditDraft,
+} from "@/lib/edit-draft-cache";
 import type { SubBox } from "@/lib/sub-boxes";
 import { visibleTaskText } from "@/lib/task-links";
 import { createId } from "@/lib/week-plan";
+
+type SubBoxEditPersist = {
+  listKey: string;
+  editingId: string;
+  draft: string;
+  baseline: string;
+};
 
 export function SubBoxToggle({
   count,
@@ -45,26 +59,52 @@ export function SubBoxList({
   onChange,
   pendingEditId,
   onPendingHandled,
+  listKey = "default",
 }: {
   items: SubBox[];
   onChange: (next: SubBox[]) => void;
   pendingEditId?: string | null;
   onPendingHandled?: () => void;
+  /** Distinguishes which parent box owns this list for draft restore. */
+  listKey?: string;
 }) {
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [draft, setDraft] = useState("");
+  const cached = peekEditDraft<SubBoxEditPersist>(SUBBOX_EDIT_KEY);
+  const restore =
+    cached && cached.listKey === listKey ? cached : null;
+  const [editingId, setEditingId] = useState<string | null>(
+    () => restore?.editingId ?? null,
+  );
+  const [draft, setDraft] = useState(() => restore?.draft ?? "");
+  const [baseline, setBaseline] = useState(() => restore?.baseline ?? "");
   const itemsRef = useRef(items);
   const onChangeRef = useRef(onChange);
   const draftRef = useRef(draft);
-  const editingIdRef = useRef<string | null>(null);
+  const editingIdRef = useRef<string | null>(editingId);
+  const baselineRef = useRef(baseline);
   const handledRef = useRef(onPendingHandled);
   const suppressBlurRef = useRef(false);
-  const ignoreBlurUntilRef = useRef(0);
   const inputRef = useRef<HTMLInputElement>(null);
   itemsRef.current = items;
   onChangeRef.current = onChange;
   draftRef.current = draft;
+  editingIdRef.current = editingId;
+  baselineRef.current = baseline;
   handledRef.current = onPendingHandled;
+
+  useEffect(() => {
+    if (!editingId) {
+      if (peekEditDraft<SubBoxEditPersist>(SUBBOX_EDIT_KEY)?.listKey === listKey) {
+        clearEditDraft(SUBBOX_EDIT_KEY);
+      }
+      return;
+    }
+    putEditDraft<SubBoxEditPersist>(SUBBOX_EDIT_KEY, {
+      listKey,
+      editingId,
+      draft,
+      baseline,
+    });
+  }, [listKey, editingId, draft, baseline]);
 
   useEffect(() => {
     if (!pendingEditId) return;
@@ -81,10 +121,11 @@ export function SubBoxList({
 
   function beginEdit(id: string, text: string) {
     editingIdRef.current = id;
-    ignoreBlurUntilRef.current = performance.now() + 300;
     draftRef.current = text;
+    baselineRef.current = text;
     setEditingId(id);
     setDraft(text);
+    setBaseline(text);
   }
 
   function commit(id: string, text = draftRef.current) {
@@ -95,10 +136,26 @@ export function SubBoxList({
     );
   }
 
-  function writeDraft(id: string, text: string) {
+  function setDraftOnly(text: string) {
     draftRef.current = text;
     setDraft(text);
-    commit(id, text);
+  }
+
+  function endEdit() {
+    editingIdRef.current = null;
+    setEditingId(null);
+    setDraft("");
+    setBaseline("");
+    clearEditDraft(SUBBOX_EDIT_KEY);
+  }
+
+  function cancelEdit() {
+    endEdit();
+  }
+
+  function commitAndClose(id: string) {
+    commit(id);
+    endEdit();
   }
 
   function updateText(id: string, text: string) {
@@ -120,8 +177,7 @@ export function SubBoxList({
   function remove(id: string) {
     onChangeRef.current(itemsRef.current.filter((item) => item.id !== id));
     if (editingIdRef.current === id) {
-      editingIdRef.current = null;
-      setEditingId(null);
+      endEdit();
     }
   }
 
@@ -134,10 +190,12 @@ export function SubBoxList({
       if (item.id === id) next.push(created);
     }
     editingIdRef.current = created.id;
-    ignoreBlurUntilRef.current = performance.now() + 300;
     onChangeRef.current(next);
+    baselineRef.current = "";
+    draftRef.current = "";
     setEditingId(created.id);
     setDraft("");
+    setBaseline("");
   }
 
   return (
@@ -153,59 +211,58 @@ export function SubBoxList({
               aria-label={`Mark sub-box ${visibleTaskText(sub.text) || "empty"} complete`}
             />
             {editing ? (
-              <Input
-                ref={inputRef}
-                autoFocus
-                value={draft}
-                placeholder="Sub-box"
-                aria-label="Edit sub-box"
-                onChange={(event) => writeDraft(sub.id, event.target.value)}
-                onBlur={(event) => {
-                  if (suppressBlurRef.current) return;
-                  if (!event.currentTarget.isConnected) return;
-                  if (editingIdRef.current !== sub.id) return;
-                  writeDraft(sub.id, event.currentTarget.value);
-                  if (performance.now() < ignoreBlurUntilRef.current) return;
-                  editingIdRef.current = null;
-                  setEditingId((cur) => (cur === sub.id ? null : cur));
-                }}
-                onKeyDown={(event) => {
-                  if (
-                    handleTaskLinkKey(
-                      event,
-                      draftRef.current,
-                      (value) => writeDraft(sub.id, value),
-                      () => {
-                        suppressBlurRef.current = true;
-                      },
-                      () => {
-                        suppressBlurRef.current = false;
-                      },
-                    )
-                  ) {
-                    return;
-                  }
-                  if (event.key === "Enter" && event.shiftKey) {
-                    event.preventDefault();
-                    insertAfter(sub.id);
-                    return;
-                  }
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    commit(sub.id);
-                    editingIdRef.current = null;
-                    setEditingId(null);
-                    return;
-                  }
-                  if (event.key === "Escape") {
-                    event.preventDefault();
-                    setDraft(sub.text);
-                    editingIdRef.current = null;
-                    setEditingId(null);
-                  }
-                }}
-                className="h-7 min-w-0 flex-1 bg-white/90 text-sm"
-              />
+              <>
+                <Input
+                  ref={inputRef}
+                  autoFocus
+                  value={draft}
+                  placeholder="Sub-box"
+                  aria-label="Edit sub-box"
+                  onChange={(event) => setDraftOnly(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (
+                      handleTaskLinkKey(
+                        event,
+                        draftRef.current,
+                        (value) => setDraftOnly(value),
+                        () => {
+                          suppressBlurRef.current = true;
+                        },
+                        () => {
+                          suppressBlurRef.current = false;
+                        },
+                      )
+                    ) {
+                      return;
+                    }
+                    if (event.key === "Enter" && event.shiftKey) {
+                      event.preventDefault();
+                      insertAfter(sub.id);
+                      return;
+                    }
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      commitAndClose(sub.id);
+                      return;
+                    }
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      cancelEdit();
+                    }
+                  }}
+                  className="h-7 min-w-0 flex-1 bg-white/90 text-sm"
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="xs"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={cancelEdit}
+                  className="opacity-0 transition-opacity group-hover/sub:opacity-100 focus-visible:opacity-100"
+                >
+                  Cancel
+                </Button>
+              </>
             ) : (
               <div
                 role="button"

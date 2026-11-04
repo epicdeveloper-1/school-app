@@ -67,6 +67,13 @@ import {
   type BoardTimeRange,
 } from "@/lib/task-time";
 import {
+  BOARD_EDIT_KEY,
+  SUBBOX_EDIT_KEY,
+  clearEditDraft,
+  peekEditDraft,
+  putEditDraft,
+} from "@/lib/edit-draft-cache";
+import {
   DAYS,
   CarriedBoxRef,
   DayKey,
@@ -207,6 +214,28 @@ function emptyDraftEstimates(): Record<DayKey, number | null> {
     sunday: null,
   };
 }
+
+type EditingTaskState = {
+  day: DayKey;
+  id: string;
+  value: string;
+  tags: BoxTag[];
+  source: "task" | "routine";
+  todoId?: string;
+  sourceWeekOf?: string;
+  sourceDay?: DayKey;
+  time: BoardTimeRange | null;
+  /** Draft duration until Enter; not written until commit. */
+  estimateMinutes: number | null;
+};
+
+type BoardEditPersist = {
+  drafts: Record<DayKey, string>;
+  draftTags: Record<DayKey, BoxTag[]>;
+  draftTimes: Record<DayKey, BoardTimeRange | null>;
+  draftEstimates: Record<DayKey, number | null>;
+  editingTask: EditingTaskState | null;
+};
 
 function timeFromClock(
   startTime?: string,
@@ -742,33 +771,35 @@ export function WeeklyStrategyBoard() {
   /** Bumped when a past-week plan is edited from Missed so that list re-reads storage. */
   const [planRevision, setPlanRevision] = useState(0);
   const [loadState, setLoadState] = useState<LoadState>("loading");
-  const [drafts, setDrafts] = useState<Record<DayKey, string>>({
-    monday: "",
-    tuesday: "",
-    wednesday: "",
-    thursday: "",
-    friday: "",
-    saturday: "",
-    sunday: "",
-  });
-  const [draftTags, setDraftTags] =
-    useState<Record<DayKey, BoxTag[]>>(emptyDraftTags);
-  const [draftTimes, setDraftTimes] =
-    useState<Record<DayKey, BoardTimeRange | null>>(emptyDraftTimes);
-  const [draftEstimates, setDraftEstimates] =
-    useState<Record<DayKey, number | null>>(emptyDraftEstimates);
+  const cachedBoard = useMemo(
+    () => peekEditDraft<BoardEditPersist>(BOARD_EDIT_KEY),
+    [],
+  );
+  const [drafts, setDrafts] = useState<Record<DayKey, string>>(
+    () =>
+      cachedBoard?.drafts ?? {
+        monday: "",
+        tuesday: "",
+        wednesday: "",
+        thursday: "",
+        friday: "",
+        saturday: "",
+        sunday: "",
+      },
+  );
+  const [draftTags, setDraftTags] = useState<Record<DayKey, BoxTag[]>>(
+    () => cachedBoard?.draftTags ?? emptyDraftTags(),
+  );
+  const [draftTimes, setDraftTimes] = useState<
+    Record<DayKey, BoardTimeRange | null>
+  >(() => cachedBoard?.draftTimes ?? emptyDraftTimes());
+  const [draftEstimates, setDraftEstimates] = useState<
+    Record<DayKey, number | null>
+  >(() => cachedBoard?.draftEstimates ?? emptyDraftEstimates());
   const [savedFlash, setSavedFlash] = useState(false);
-  const [editingTask, setEditingTask] = useState<{
-    day: DayKey;
-    id: string;
-    value: string;
-    tags: BoxTag[];
-    source: "task" | "routine";
-    todoId?: string;
-    sourceWeekOf?: string;
-    sourceDay?: DayKey;
-    time: BoardTimeRange | null;
-  } | null>(null);
+  const [editingTask, setEditingTask] = useState<EditingTaskState | null>(
+    () => cachedBoard?.editingTask ?? null,
+  );
   const editingTaskRef = useRef(editingTask);
   editingTaskRef.current = editingTask;
   const suppressEditBlurRef = useRef(false);
@@ -794,11 +825,37 @@ export function WeeklyStrategyBoard() {
     (row: DayBoardRow, day: DayKey, week: string, href: string) => void
   >(() => {});
   /** Row ids whose sub-boxes are expanded. Missing ids stay collapsed. */
-  const [openSubs, setOpenSubs] = useState<Record<string, boolean>>({});
+  const [openSubs, setOpenSubs] = useState<Record<string, boolean>>(() => {
+    const sub = peekEditDraft<{ listKey: string }>(SUBBOX_EDIT_KEY);
+    return sub?.listKey ? { [sub.listKey]: true } : {};
+  });
   const [subFocus, setSubFocus] = useState<{
     rowId: string;
     editId?: string;
   } | null>(null);
+
+  useEffect(() => {
+    const hasComposer = DAYS.some((day) => {
+      const key = day.key;
+      return (
+        drafts[key].trim().length > 0 ||
+        draftTags[key].length > 0 ||
+        draftTimes[key] != null ||
+        draftEstimates[key] != null
+      );
+    });
+    if (!editingTask && !hasComposer) {
+      clearEditDraft(BOARD_EDIT_KEY);
+      return;
+    }
+    putEditDraft<BoardEditPersist>(BOARD_EDIT_KEY, {
+      drafts,
+      draftTags,
+      draftTimes,
+      draftEstimates,
+      editingTask,
+    });
+  }, [drafts, draftTags, draftTimes, draftEstimates, editingTask]);
 
   const weekDues = useMemo(
     () => (plan ? eventsForWeek(dueEvents, plan.weekOf) : []),
@@ -966,6 +1023,8 @@ export function WeeklyStrategyBoard() {
   function goToWeek(weekOf: string) {
     setEditingTask(null);
     editingTaskRef.current = null;
+    clearEditDraft(BOARD_EDIT_KEY);
+    clearEditDraft(SUBBOX_EDIT_KEY);
     setMoveDay(null);
     setDragTaskId(null);
     setDragHeight(0);
@@ -1150,13 +1209,17 @@ export function WeeklyStrategyBoard() {
     task: TaskItem,
     carry?: CarryPointer,
   ) {
-    const next = {
+    const next: EditingTaskState = {
       day,
       id: task.id,
       value: taskBodyText(task),
       tags: normalizeTaskTags(task.tags),
-      source: "task" as const,
+      source: "task",
       time: timeFromClock(task.startTime, task.endTime),
+      estimateMinutes:
+        task.estimateMinutes && task.estimateMinutes > 0
+          ? task.estimateMinutes
+          : null,
       ...(carry
         ? { sourceWeekOf: carry.sourceWeekOf, sourceDay: carry.sourceDay }
         : {}),
@@ -1165,15 +1228,21 @@ export function WeeklyStrategyBoard() {
     setEditingTask(next);
   }
 
-  function beginEditRoutine(day: DayKey, item: RecurringTodoBox) {
-    const next = {
+  function beginEditRoutine(
+    day: DayKey,
+    item: RecurringTodoBox,
+    estimateMinutes?: number,
+  ) {
+    const next: EditingTaskState = {
       day,
       id: item.id,
       value: item.text,
       tags: normalizeTaskTags(item.tags),
-      source: "routine" as const,
+      source: "routine",
       todoId: item.todoId,
       time: timeFromClock(item.startTime, item.endTime),
+      estimateMinutes:
+        estimateMinutes && estimateMinutes > 0 ? estimateMinutes : null,
     };
     editingTaskRef.current = next;
     setEditingTask(next);
@@ -1186,12 +1255,15 @@ export function WeeklyStrategyBoard() {
     editingTaskRef.current = null;
     setEditingTask(null);
     const resolvedTime = resolveBoxTime(cur.value, cur.time);
-    const detachedDuration = detachBoardDuration(resolvedTime.text);
-    const text = detachedDuration.text.trim();
+    const resolvedDuration = resolveBoxDuration(
+      resolvedTime.text,
+      cur.estimateMinutes,
+    );
+    const text = resolvedDuration.text.trim();
     const tags = normalizeTaskTags(cur.tags);
     const time = resolvedTime.time;
-    const estimateFromText = detachedDuration.estimateMinutes;
-    if (!text && tags.length === 0 && !time) return;
+    const estimateMinutes = resolvedDuration.estimateMinutes;
+    if (!text && tags.length === 0 && !time && !estimateMinutes) return;
 
     if (cur.source === "routine" && cur.todoId) {
       const existing = recurringTodos.find((t) => t.id === cur.todoId);
@@ -1202,9 +1274,10 @@ export function WeeklyStrategyBoard() {
         day: existing?.day ?? cur.day,
         ...(time ? clockFields(time) : {}),
       });
-      if (estimateFromText) {
-        setOverlayEstimate(cur.id, estimateFromText);
-      }
+      setOverlayEstimate(
+        cur.id,
+        estimateMinutes && estimateMinutes > 0 ? estimateMinutes : undefined,
+      );
       return;
     }
 
@@ -1231,8 +1304,10 @@ export function WeeklyStrategyBoard() {
             delete next.startTime;
             delete next.endTime;
           }
-          if (estimateFromText) {
-            next.estimateMinutes = estimateFromText;
+          if (estimateMinutes && estimateMinutes > 0) {
+            next.estimateMinutes = estimateMinutes;
+          } else {
+            delete next.estimateMinutes;
           }
           return next;
         }),
@@ -1276,18 +1351,13 @@ export function WeeklyStrategyBoard() {
     cur: NonNullable<typeof editingTask>,
     estimateMinutes: number | null,
   ) {
-    const minutes =
-      estimateMinutes && estimateMinutes > 0 ? estimateMinutes : undefined;
-    if (cur.source === "routine") {
-      setOverlayEstimate(cur.id, minutes);
-      return;
-    }
-    setTaskEstimate(
-      cur.sourceDay ?? cur.day,
-      cur.id,
-      minutes,
-      cur.sourceWeekOf,
-    );
+    const next: EditingTaskState = {
+      ...cur,
+      estimateMinutes:
+        estimateMinutes && estimateMinutes > 0 ? estimateMinutes : null,
+    };
+    editingTaskRef.current = next;
+    setEditingTask(next);
   }
 
   if (loadState === "loading" || !plan) {
@@ -2420,6 +2490,7 @@ export function WeeklyStrategyBoard() {
                         subOpen && subs.length > 0 ? (
                           <div className="mt-1 ml-7 border-l border-seafoam/40 pl-2.5">
                             <SubBoxList
+                              listKey={rowId}
                               items={subs}
                               onChange={(next) =>
                                 setRowSubboxes(row, day.key, next)
@@ -2663,18 +2734,7 @@ export function WeeklyStrategyBoard() {
                               aria-label={`Mark ${visibleTaskText(item.text) || "box"} complete`}
                             />
                             {isEditing ? (
-                              <div
-                                className="flex min-w-0 flex-1 flex-wrap items-start gap-x-1.5 gap-y-1"
-                                onBlur={(e) => {
-                                  if (
-                                    !e.currentTarget.contains(
-                                      e.relatedTarget as Node,
-                                    )
-                                  ) {
-                                    commitEditTask();
-                                  }
-                                }}
-                              >
+                              <div className="flex min-w-0 flex-1 flex-wrap items-start gap-x-1.5 gap-y-1">
                                 {editingTask.tags.length > 0 && (
                                   <span className="shrink-0 pt-1 text-sm leading-snug">
                                     <TaskTagPrefixes
@@ -2724,7 +2784,7 @@ export function WeeklyStrategyBoard() {
                                         key: `edit:${editingTask.id}`,
                                         value: editingTask.value,
                                         estimateMinutes:
-                                          estimateMinutesFor(row) ?? null,
+                                          editingTask.estimateMinutes,
                                         undoRef: durationChipUndoRef,
                                         onChange: ({
                                           value,
@@ -2734,11 +2794,8 @@ export function WeeklyStrategyBoard() {
                                           timeChipUndoRef.current = null;
                                           const cur = editingTaskRef.current;
                                           if (!cur) return;
-                                          const next = { ...cur, value };
-                                          editingTaskRef.current = next;
-                                          setEditingTask(next);
                                           applyEditingDuration(
-                                            next,
+                                            { ...cur, value },
                                             estimateMinutes,
                                           );
                                         },
@@ -2821,6 +2878,15 @@ export function WeeklyStrategyBoard() {
                                     setEditingTags(tags);
                                   }}
                                 />
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="xs"
+                                  onMouseDown={(e) => e.preventDefault()}
+                                  onClick={cancelEditTask}
+                                >
+                                  Cancel
+                                </Button>
                               </div>
                             ) : editable ? (
                               <div
@@ -2835,13 +2901,21 @@ export function WeeklyStrategyBoard() {
                                   }
                                   const selection = window.getSelection();
                                   if (selection && !selection.isCollapsed) return;
-                                  beginEditRoutine(day.key, item);
+                                  beginEditRoutine(
+                                    day.key,
+                                    item,
+                                    estimateMinutesFor(row),
+                                  );
                                 }}
                                 onKeyDown={(event) => {
                                   if (event.target !== event.currentTarget) return;
                                   if (event.key !== "Enter" && event.key !== " ") return;
                                   event.preventDefault();
-                                  beginEditRoutine(day.key, item);
+                                  beginEditRoutine(
+                                    day.key,
+                                    item,
+                                    estimateMinutesFor(row),
+                                  );
                                 }}
                                 className={`min-w-0 flex-1 cursor-text break-words rounded-sm text-left text-sm leading-snug outline-none hover:bg-secondary/40 focus-visible:ring-2 focus-visible:ring-ring/50 ${
                                   item.done ? "line-through" : ""
@@ -2885,11 +2959,21 @@ export function WeeklyStrategyBoard() {
                               </span>
                             )}
                             <TaskEstimateInput
-                              minutes={estimateMinutesFor(row)}
-                              dimmed={item.done}
-                              onChange={(minutes) =>
-                                setRowEstimate(row, day.key, minutes)
+                              minutes={
+                                isEditing
+                                  ? (editingTask.estimateMinutes ?? undefined)
+                                  : estimateMinutesFor(row)
                               }
+                              dimmed={item.done}
+                              onChange={(minutes) => {
+                                if (isEditing) {
+                                  const cur = editingTaskRef.current;
+                                  if (!cur) return;
+                                  applyEditingDuration(cur, minutes ?? null);
+                                  return;
+                                }
+                                setRowEstimate(row, day.key, minutes);
+                              }}
                             />
                             {row.carry ? (
                               <button
@@ -2908,6 +2992,10 @@ export function WeeklyStrategyBoard() {
                       }
 
                       const task = row.item;
+                      const isEditingTask =
+                        editingTask?.day === day.key &&
+                        editingTask.id === task.id &&
+                        editingTask.source === "task";
                       return (
                         <BoardRowLi key={rowId} {...rowShellWithSubs}>
                           <Checkbox
@@ -2918,21 +3006,8 @@ export function WeeklyStrategyBoard() {
                             className="mt-0.5"
                             aria-label={`Mark ${visibleTaskText(taskBodyText(task))} complete`}
                           />
-                          {editingTask?.day === day.key &&
-                          editingTask.id === task.id &&
-                          editingTask.source === "task" ? (
-                              <div
-                              className="flex min-w-0 flex-1 flex-wrap items-start gap-x-1.5 gap-y-1"
-                              onBlur={(e) => {
-                                if (
-                                  !e.currentTarget.contains(
-                                    e.relatedTarget as Node,
-                                  )
-                                ) {
-                                  commitEditTask();
-                                }
-                              }}
-                            >
+                          {isEditingTask ? (
+                              <div className="flex min-w-0 flex-1 flex-wrap items-start gap-x-1.5 gap-y-1">
                               {editingTask.tags.length > 0 && (
                                 <span className="shrink-0 pt-1 text-sm leading-snug">
                                   <TaskTagPrefixes
@@ -2982,7 +3057,7 @@ export function WeeklyStrategyBoard() {
                                       key: `edit:${editingTask.id}`,
                                       value: editingTask.value,
                                       estimateMinutes:
-                                        estimateMinutesFor(row) ?? null,
+                                        editingTask.estimateMinutes,
                                       undoRef: durationChipUndoRef,
                                       onChange: ({
                                         value,
@@ -2992,11 +3067,8 @@ export function WeeklyStrategyBoard() {
                                         timeChipUndoRef.current = null;
                                         const cur = editingTaskRef.current;
                                         if (!cur) return;
-                                        const next = { ...cur, value };
-                                        editingTaskRef.current = next;
-                                        setEditingTask(next);
                                         applyEditingDuration(
-                                          next,
+                                          { ...cur, value },
                                           estimateMinutes,
                                         );
                                       },
@@ -3078,6 +3150,15 @@ export function WeeklyStrategyBoard() {
                                   setEditingTags(tags);
                                 }}
                               />
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="xs"
+                                onMouseDown={(e) => e.preventDefault()}
+                                onClick={cancelEditTask}
+                              >
+                                Cancel
+                              </Button>
                             </div>
                           ) : (
                             <div
@@ -3127,11 +3208,21 @@ export function WeeklyStrategyBoard() {
                             </div>
                           )}
                           <TaskEstimateInput
-                            minutes={estimateMinutesFor(row)}
-                            dimmed={task.done}
-                            onChange={(minutes) =>
-                              setRowEstimate(row, day.key, minutes)
+                            minutes={
+                              isEditingTask
+                                ? (editingTask?.estimateMinutes ?? undefined)
+                                : estimateMinutesFor(row)
                             }
+                            dimmed={task.done}
+                            onChange={(minutes) => {
+                              if (isEditingTask) {
+                                const cur = editingTaskRef.current;
+                                if (!cur) return;
+                                applyEditingDuration(cur, minutes ?? null);
+                                return;
+                              }
+                              setRowEstimate(row, day.key, minutes);
+                            }}
                           />
                           <button
                             type="button"
@@ -3427,6 +3518,7 @@ export function WeeklyStrategyBoard() {
                       {missedSubsOpen && missedSubs.length > 0 ? (
                         <div className="mt-1 ml-1 border-l border-seafoam/40 pl-2.5">
                           <SubBoxList
+                            listKey={`missed:${missedWeek}:${boardRowId(row)}`}
                             items={missedSubs}
                             onChange={(next) =>
                               setRowSubboxes(row, day, next, missedWeek)
