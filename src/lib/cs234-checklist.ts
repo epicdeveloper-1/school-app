@@ -1,4 +1,4 @@
-import { isBlankProfile } from "./app-profile";
+import { hasPersonalFeatures } from "./personal-access";
 import { readStorage, writeStorage } from "./storage";
 
 export type Cs234ItemKind =
@@ -107,6 +107,8 @@ function isItem(value: unknown): value is Cs234ChecklistItem {
 }
 
 let memoryStore: Cs234ChecklistStore | null = null;
+/** True after a successful personal-features load (avoids sticking on blank empty). */
+let initializedWithPersonal = false;
 
 type Listener = () => void;
 const listeners = new Set<Listener>();
@@ -148,24 +150,28 @@ async function persist(): Promise<void> {
 
 export async function initCs234ChecklistStore(): Promise<Cs234ChecklistStore> {
   if (typeof window === "undefined") return emptyStore();
-  if (isBlankProfile()) {
+  if (!hasPersonalFeatures()) {
     memoryStore = emptyStore();
+    initializedWithPersonal = false;
     return memoryStore;
   }
-  if (memoryStore) return memoryStore;
+  if (memoryStore && initializedWithPersonal) return memoryStore;
   // Read only — persisting on init fights cloud pull (see due-events init).
   memoryStore = await readStoreFromDisk();
+  initializedWithPersonal = true;
   notify();
   return memoryStore;
 }
 
 /** Reload checklist from disk after a cloud pull (no re-upload). */
 export async function reloadCs234ChecklistFromDisk(): Promise<Cs234ChecklistStore> {
-  if (typeof window === "undefined" || isBlankProfile()) {
+  if (typeof window === "undefined" || !hasPersonalFeatures()) {
     memoryStore = emptyStore();
+    initializedWithPersonal = false;
     return memoryStore;
   }
   memoryStore = await readStoreFromDisk();
+  initializedWithPersonal = true;
   notify();
   return memoryStore;
 }
@@ -350,26 +356,23 @@ export async function setCs234ItemDone(
 }
 
 
-const cs234Seed =
-  process.env.NEXT_PUBLIC_APP_PROFILE === "blank"
-    ? null
-    : // eslint-disable-next-line @typescript-eslint/no-require-imports
-      (require("./personal/cs234-seed") as typeof import("./personal/cs234-seed"));
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const cs234Seed = require("./personal/cs234-seed") as typeof import("./personal/cs234-seed");
 
 export function buildCs234ChecklistSeed(): Cs234ChecklistItem[] {
-  if (!cs234Seed) return [];
+  if (!hasPersonalFeatures()) return [];
   return cs234Seed.buildCs234ChecklistSeed();
 }
 
 export function isLegacyCs234DayTask(
   taskOrText: string | { text: string; tags?: string[]; optional?: boolean },
 ): boolean {
-  if (!cs234Seed) return false;
+  if (!hasPersonalFeatures()) return false;
   return cs234Seed.isLegacyCs234DayTask(taskOrText);
 }
 
 export function cs234OfficialDues(): Cs234OfficialDue[] {
-  if (!cs234Seed) return [];
+  if (!hasPersonalFeatures()) return [];
   return cs234Seed.cs234OfficialDues();
 }
 

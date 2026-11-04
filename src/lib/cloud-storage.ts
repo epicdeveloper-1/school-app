@@ -11,6 +11,7 @@ import {
 } from "firebase/firestore";
 import { getAppProfile, type AppProfile } from "./app-profile";
 import { getFirebaseAuth, getFirebaseDb } from "./firebase-client";
+import { hasPersonalFeatures } from "./personal-access";
 import { localIsTooSparseForCloud } from "./sync-guard";
 
 /** Firestore document ids cannot contain slashes. Match the desktop filename filter. */
@@ -102,7 +103,9 @@ export async function writeCloudStorage(
   }
 
   const profile: AppProfile =
-    existing?.clientProfile === "personal" ? "personal" : getAppProfile();
+    existing?.clientProfile === "personal" || hasPersonalFeatures()
+      ? "personal"
+      : getAppProfile();
 
   await setDoc(ref, {
     value,

@@ -22,6 +22,7 @@ import {
   isMath235ShortGap,
   termQuizWeekMondays,
 } from "./strategy-data";
+import { hasPersonalFeatures } from "./personal-access";
 
 /** Course label on calendar events — matches a box-tag label, or `"Other"`. */
 export type DueCourse = string;
@@ -392,21 +393,16 @@ export function amathMidtermQuizTuesday(): string {
   return addDays(AMATH_MIDTERM_WEEK_OF, 1);
 }
 
-/** Personal course seeds live in a module the blank build does not import. */
-const dueOwner =
-  process.env.NEXT_PUBLIC_APP_PROFILE === "blank"
-    ? null
-    : // eslint-disable-next-line @typescript-eslint/no-require-imports
-      (require("./personal/due-owner") as typeof import("./personal/due-owner"));
+// Always bundled; due-owner gates empty seeds via hasPersonalFeatures.
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const dueOwner = require("./personal/due-owner") as typeof import("./personal/due-owner");
 
 export function buildCs234DueEvents(): DueEvent[] {
-  if (!dueOwner) return [];
   return dueOwner.buildCs234DueEvents();
 }
 
 /** Syllabus seed — official dues + board placement rules. */
 export function buildOfficialDueEventSeed(): DueEvent[] {
-  if (!dueOwner) return [];
   return dueOwner.buildOfficialDueEventSeed();
 }
 
@@ -686,7 +682,7 @@ export function attachDefaultRules(event: DueEvent): DueEvent {
 }
 
 function migrateStore(store: DueEventsStore): DueEventsStore {
-  if (!dueOwner) return store;
+  if (!hasPersonalFeatures()) return store;
   return dueOwner.migrateOwnerDueStore(store);
 }
 

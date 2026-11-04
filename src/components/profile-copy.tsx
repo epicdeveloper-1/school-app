@@ -2,6 +2,11 @@
 
 import { useSyncExternalStore } from "react";
 import { isBlankProfile } from "@/lib/app-profile";
+import { useHasPersonalFeatures } from "@/lib/personal-access";
+import {
+  personalHeroDetail,
+  personalHeroEyebrow,
+} from "@/lib/personal/labels";
 
 function subscribeDesktopBridge(): () => void {
   return () => {};
@@ -23,22 +28,18 @@ export function useIsCloudProfile(): boolean {
 
 export function HeroEyebrow() {
   const cloud = useIsCloudProfile();
-  if (process.env.NEXT_PUBLIC_APP_PROFILE === "blank") {
-    return cloud ? "Your Google account" : "On this computer";
-  }
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  return require("@/lib/personal/labels").personalHeroEyebrow();
+  const personal = useHasPersonalFeatures();
+  if (personal) return personalHeroEyebrow();
+  return cloud ? "Your Google account" : "On this computer";
 }
 
 export function HeroDetail() {
   const cloud = useIsCloudProfile();
-  if (process.env.NEXT_PUBLIC_APP_PROFILE === "blank") {
-    return cloud
-      ? "Add your own tasks and dates. They are saved to your Google account."
-      : "Add your own tasks and dates. Everything stays on this computer.";
-  }
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  return require("@/lib/personal/labels").personalHeroDetail();
+  const personal = useHasPersonalFeatures();
+  if (personal) return personalHeroDetail();
+  return cloud
+    ? "Add your own tasks and dates. They are saved to your Google account."
+    : "Add your own tasks and dates. Everything stays on this computer.";
 }
 
 export function SettingsIntro() {
@@ -46,7 +47,7 @@ export function SettingsIntro() {
   if (cloud) {
     return "Customize how your planner works. Changes save to your Google account.";
   }
-  if (process.env.NEXT_PUBLIC_APP_PROFILE === "blank") {
+  if (isBlankProfile()) {
     return "Customize how your planner works. Changes save locally on this device.";
   }
   return "Customize how your planner works. Changes save on this device first; optional Google sync is below.";

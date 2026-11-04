@@ -5,19 +5,15 @@ import {
   startOfWeek,
   type WeekPlan,
 } from "./week-plan";
+import { hasPersonalFeatures } from "./personal-access";
 
-type PersonalStrategy = typeof import("./personal/strategy-data");
-
-const personalStrategy: PersonalStrategy | null =
-  process.env.NEXT_PUBLIC_APP_PROFILE === "blank"
-    ? null
-    : // eslint-disable-next-line @typescript-eslint/no-require-imports
-      (require("./personal/strategy-data") as PersonalStrategy);
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const personalStrategy = require("./personal/strategy-data") as typeof import("./personal/strategy-data");
 
 export function buildWeekPlan(
   weekOf = formatWeekOf(startOfWeek()),
 ): WeekPlan {
-  if (!personalStrategy) {
+  if (!hasPersonalFeatures()) {
     return {
       weekOf,
       focus: "",
@@ -35,32 +31,25 @@ export function buildWeekPlan(
 export function isLegacyAcademicDayTask(
   taskOrText: string | { text: string; tags?: string[]; optional?: boolean },
 ): boolean {
-  if (!personalStrategy) return false;
+  if (!hasPersonalFeatures()) return false;
   return personalStrategy.isLegacyAcademicDayTask(taskOrText);
 }
 
-export const MATH_235_QUIZZES: readonly string[] = personalStrategy
-  ? personalStrategy.MATH_235_QUIZZES
-  : [];
+export const MATH_235_QUIZZES: readonly string[] =
+  personalStrategy.MATH_235_QUIZZES;
 
 export function isMath235ShortGap(quizDate: string): boolean {
-  if (!personalStrategy) return false;
   return personalStrategy.isMath235ShortGap(quizDate);
 }
 
-export const READING_WEEK_OF: string = personalStrategy
-  ? personalStrategy.READING_WEEK_OF
-  : "2026-10-12";
+export const READING_WEEK_OF: string = personalStrategy.READING_WEEK_OF;
 
-export const MATH_237_FIRST_QUIZ: string = personalStrategy
-  ? personalStrategy.MATH_237_FIRST_QUIZ
-  : "2026-09-22";
+export const MATH_237_FIRST_QUIZ: string = personalStrategy.MATH_237_FIRST_QUIZ;
 
-export const AMATH_MIDTERM_WEEK_OF: string = personalStrategy
-  ? personalStrategy.AMATH_MIDTERM_WEEK_OF
-  : "2026-10-19";
+export const AMATH_MIDTERM_WEEK_OF: string =
+  personalStrategy.AMATH_MIDTERM_WEEK_OF;
 
 export function termQuizWeekMondays(): string[] {
-  if (!personalStrategy) return [];
+  if (!hasPersonalFeatures()) return [];
   return personalStrategy.termQuizWeekMondays();
 }

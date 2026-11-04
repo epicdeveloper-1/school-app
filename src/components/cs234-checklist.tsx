@@ -15,6 +15,7 @@ import {
   subscribeCs234,
   toggleCs234Item,
 } from "@/lib/cs234-checklist";
+import { useHasPersonalFeatures } from "@/lib/personal-access";
 
 function ItemRow({
   item,
@@ -51,10 +52,16 @@ function ItemRow({
 }
 
 export function Cs234Checklist() {
+  const personal = useHasPersonalFeatures();
   const [items, setItems] = useState<Cs234ChecklistItem[]>([]);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
+    if (!personal) {
+      setItems([]);
+      setReady(false);
+      return;
+    }
     let cancelled = false;
     (async () => {
       await initCs234ChecklistStore();
@@ -69,11 +76,13 @@ export function Cs234Checklist() {
       cancelled = true;
       unsub();
     };
-  }, []);
+  }, [personal]);
 
   async function onToggle(id: string) {
     await toggleCs234Item(id);
   }
+
+  if (!personal) return null;
 
   if (!ready) {
     return (

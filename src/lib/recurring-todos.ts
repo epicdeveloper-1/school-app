@@ -1,4 +1,4 @@
-import { isBlankProfile } from "./app-profile";
+import { hasPersonalFeatures } from "./personal-access";
 import { readStorage, writeStorage } from "./storage";
 import type { BoxTag } from "./box-tags";
 import { normalizeTaskTags } from "./box-tags";
@@ -63,7 +63,7 @@ function normalizeOptionalTime(raw: unknown): string | undefined {
 }
 
 export function buildRecurringTodoSeed(): RecurringTodo[] {
-  if (isBlankProfile()) return [];
+  if (!hasPersonalFeatures()) return [];
   const optional = (text: string, day: DayKey, id: string): RecurringTodo => ({
     id,
     text,

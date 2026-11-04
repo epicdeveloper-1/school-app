@@ -10,6 +10,7 @@ import {
   type SyncStatusSnapshot,
 } from "@/lib/cloud-sync";
 import { getFirebaseAuth, isFirebaseConfigured } from "@/lib/firebase-client";
+import { useHasPersonalFeatures } from "@/lib/personal-access";
 
 function formatSyncTime(ms: number | null): string {
   if (ms == null) return "Not synced yet";
@@ -22,6 +23,7 @@ function formatSyncTime(ms: number | null): string {
 
 export function BlankAccountPanel() {
   const cloud = useIsCloudProfile();
+  const personal = useHasPersonalFeatures();
   const [email, setEmail] = useState<string | null>(null);
   const [status, setStatus] = useState<SyncStatusSnapshot | null>(null);
   const [pending, setPending] = useState(false);
@@ -49,9 +51,9 @@ export function BlankAccountPanel() {
         is stored for this account and cached in this browser.
       </p>
       <p className="mt-2 text-sm text-muted-foreground">
-        Friend blank site — real edits sync when signed in; empty seed data will
-        not overwrite a richer personal backup. For the full CS234 UI, use the
-        personal Hosting channel from the deploy summary.
+        {personal
+          ? "Personal syllabus UI (including CS 234) is enabled for this account. Edits sync with your Google backup."
+          : "Friend blank site — real edits sync when signed in; empty seed data will not overwrite a richer personal backup."}
       </p>
       {status?.lastSyncAt != null ? (
         <p className="mt-2 text-xs text-muted-foreground">

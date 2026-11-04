@@ -1,15 +1,7 @@
 import { AppNav } from "@/components/app-nav";
 import { HeroDetail, HeroEyebrow, SiteFooter } from "@/components/profile-copy";
 import { WeeklyStrategyBoard } from "@/components/weekly-strategy-board";
-import type { ComponentType } from "react";
-
-const Cs234Checklist: ComponentType =
-  process.env.NEXT_PUBLIC_APP_PROFILE === "blank"
-    ? function HiddenCs234Checklist() {
-        return null;
-      }
-    : // eslint-disable-next-line @typescript-eslint/no-require-imports
-      require("@/components/cs234-checklist").Cs234Checklist;
+import { Cs234Checklist } from "@/components/cs234-checklist";
 
 export default function Home() {
   return (
@@ -53,11 +45,9 @@ export default function Home() {
 
         <div id="board" className="scroll-mt-8">
           <WeeklyStrategyBoard />
-          {process.env.NEXT_PUBLIC_APP_PROFILE === "blank" ? null : (
-            <div id="cs234" className="scroll-mt-8">
-              <Cs234Checklist />
-            </div>
-          )}
+          <div id="cs234" className="scroll-mt-8">
+            <Cs234Checklist />
+          </div>
         </div>
       </main>
 

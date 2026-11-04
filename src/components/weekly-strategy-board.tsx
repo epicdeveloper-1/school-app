@@ -133,7 +133,15 @@ import {
   updateReminder,
 } from "@/lib/reminders";
 import { WeeklyRoutinesPanel } from "@/components/weekly-routines-panel";
-import { isBlankProfile } from "@/lib/app-profile";
+import {
+  hasPersonalFeatures,
+  useHasPersonalFeatures,
+} from "@/lib/personal-access";
+import {
+  personalCsBoardPrefix,
+  personalFocusFallback,
+  personalWeekEyebrow,
+} from "@/lib/personal/labels";
 import {
   CS234_WEEKS,
   Cs234ChecklistItem,
@@ -711,10 +719,7 @@ function normalizePlan(plan: WeekPlan): WeekPlan {
     flexNotes: rest.flexNotes ?? [],
     focus:
       rest.focus ??
-      (process.env.NEXT_PUBLIC_APP_PROFILE === "blank"
-        ? ""
-        : // eslint-disable-next-line @typescript-eslint/no-require-imports
-          require("@/lib/personal/labels").personalFocusFallback()),
+      (hasPersonalFeatures() ? personalFocusFallback() : ""),
     days,
     dayMeta,
     overlayEstimates,
@@ -726,6 +731,7 @@ function normalizePlan(plan: WeekPlan): WeekPlan {
 }
 
 export function WeeklyStrategyBoard() {
+  const personal = useHasPersonalFeatures();
   const [plan, setPlan] = useState<WeekPlan | null>(null);
   const [dueEvents, setDueEvents] = useState<DueEvent[]>([]);
   const [boxDone, setBoxDone] = useState<Record<string, boolean>>({});
@@ -828,14 +834,6 @@ export function WeeklyStrategyBoard() {
         if (cancelled) return;
         setReminders(await listReminders());
 
-        if (!isBlankProfile()) {
-          await initCs234ChecklistStore();
-          if (cancelled) return;
-          const csItems = await listCs234Items();
-          if (cancelled) return;
-          setCs234Items(csItems);
-        }
-
         const stored = await loadPlan(currentWeek);
         if (cancelled) return;
 
@@ -856,6 +854,22 @@ export function WeeklyStrategyBoard() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!personal) {
+      setCs234Items([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      await initCs234ChecklistStore();
+      if (cancelled) return;
+      setCs234Items(await listCs234Items());
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [personal]);
 
   useEffect(() => {
     return subscribeCs234(() => {
@@ -2144,12 +2158,9 @@ export function WeeklyStrategyBoard() {
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <p className="mb-2 text-sm font-medium tracking-wide text-seafoam uppercase">
-              {process.env.NEXT_PUBLIC_APP_PROFILE === "blank"
-                ? `Week of ${formatWeekLabel(plan.weekOf)}`
-                : // eslint-disable-next-line @typescript-eslint/no-require-imports
-                  require("@/lib/personal/labels").personalWeekEyebrow(
-                    formatWeekLabel(plan.weekOf),
-                  )}
+              {personal
+                ? personalWeekEyebrow(formatWeekLabel(plan.weekOf))
+                : `Week of ${formatWeekLabel(plan.weekOf)}`}
             </p>
             <h2 className="font-heading text-3xl font-semibold tracking-tight text-ink sm:text-4xl">
               Your strategy board
@@ -2512,11 +2523,9 @@ export function WeeklyStrategyBoard() {
                           noteWeek != null
                             ? dueNoteForWeek(item, noteWeek)
                             : item.dueNote;
-                        const label =
-                          process.env.NEXT_PUBLIC_APP_PROFILE === "blank"
-                            ? item.label
-                            : // eslint-disable-next-line @typescript-eslint/no-require-imports
-                              `${require("@/lib/personal/labels").personalCsBoardPrefix()} | ${item.label}`;
+                        const label = personal
+                          ? `${personalCsBoardPrefix()} | ${item.label}`
+                          : item.label;
                         const tags = csBoardTags(item, noteWeek);
                         return (
                           <BoardRowLi key={rowId} {...rowShellWithSubs}>

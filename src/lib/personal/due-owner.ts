@@ -1,4 +1,4 @@
-import { isBlankProfile } from "../app-profile";
+import { hasPersonalFeatures } from "../personal-access";
 import { cs234OfficialDues } from "../cs234-checklist";
 import {
   AMATH_MIDTERM_WEEK_OF,
@@ -132,7 +132,7 @@ function buildWaterBoysRehearsalSeries(): DueEvent {
 
 /** Syllabus seed — official dues + board placement rules. */
 export function buildOfficialDueEventSeed(): DueEvent[] {
-  if (isBlankProfile()) return [];
+  if (!hasPersonalFeatures()) return [];
   const events: DueEvent[] = [
     ...buildCs234DueEvents(),
     ...buildMath235Events(),

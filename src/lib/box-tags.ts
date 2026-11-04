@@ -1,6 +1,5 @@
 import type { TaskItem } from "@/lib/week-plan";
-
-
+import { hasPersonalFeatures } from "./personal-access";
 
 /** Stable tag id (stored on tasks, events, routines). */
 
@@ -34,17 +33,15 @@ export const BLANK_BOX_TAGS: BoxTagMeta[] = [
   },
 ];
 
-const INITIAL_BOX_TAGS: BoxTagMeta[] =
-  process.env.NEXT_PUBLIC_APP_PROFILE === "blank"
-    ? BLANK_BOX_TAGS
-    : // eslint-disable-next-line @typescript-eslint/no-require-imports
-      (require("./personal/box-tags").DEFAULT_BOX_TAGS as BoxTagMeta[]);
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const PERSONAL_BOX_TAGS = require("./personal/box-tags")
+  .DEFAULT_BOX_TAGS as BoxTagMeta[];
 
 export function defaultBoxTags(): BoxTagMeta[] {
-  return INITIAL_BOX_TAGS;
+  return hasPersonalFeatures() ? PERSONAL_BOX_TAGS : BLANK_BOX_TAGS;
 }
 
-let runtimeTags: BoxTagMeta[] = [...defaultBoxTags()];
+let runtimeTags: BoxTagMeta[] = [...BLANK_BOX_TAGS];
 
 
 
@@ -66,7 +63,7 @@ export function getBoxTags(): readonly BoxTagMeta[] {
 
 /** @deprecated Use getBoxTags() or useTags(); kept for non-React modules at init. */
 
-export const BOX_TAGS: BoxTagMeta[] = INITIAL_BOX_TAGS;
+export const BOX_TAGS: BoxTagMeta[] = BLANK_BOX_TAGS;
 
 
 

@@ -4,7 +4,7 @@
  * constants and week plan seeds (deadlines, empty day shells).
  */
 
-import { isBlankProfile } from "@/lib/app-profile";
+import { hasPersonalFeatures } from "@/lib/personal-access";
 import {
   DayKey,
   WeekPlan,
@@ -426,7 +426,7 @@ export function deadlinesForWeek(weekOf: string): Deadline[] {
 export function buildWeekPlan(
   weekOf = formatWeekOf(startOfWeek()),
 ): WeekPlan {
-  if (isBlankProfile()) {
+  if (!hasPersonalFeatures()) {
     return {
       weekOf,
       focus: "",

@@ -18,6 +18,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { BoxTagPicker, TaskTagPrefixes } from "@/components/box-tag-picker";
 import { useTags } from "@/components/tags-provider";
 import { BoxTag, normalizeTaskTags } from "@/lib/box-tags";
+import { useHasPersonalFeatures } from "@/lib/personal-access";
+import {
+  personalCalendarEyebrow,
+  personalEventPlaceholder,
+} from "@/lib/personal/labels";
 import {
   DEFAULT_CALENDAR_WEEK_START,
   calendarWeekdayHeaders,
@@ -309,6 +314,7 @@ function RuleEstimateInput({
 }
 
 export function DueCalendar() {
+  const personal = useHasPersonalFeatures();
   const { tags } = useTags();
   const courses = useMemo(() => listDueCourses(), [tags]);
   const [events, setEvents] = useState<DueEvent[]>([]);
@@ -708,10 +714,7 @@ export function DueCalendar() {
       <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="mb-2 text-sm font-medium tracking-[0.2em] text-seafoam uppercase">
-            {process.env.NEXT_PUBLIC_APP_PROFILE === "blank"
-              ? "Calendar"
-              : // eslint-disable-next-line @typescript-eslint/no-require-imports
-                require("@/lib/personal/labels").personalCalendarEyebrow()}
+            {personal ? personalCalendarEyebrow() : "Calendar"}
           </p>
           <h1 className="font-heading text-4xl font-semibold tracking-tight text-ink sm:text-5xl">
             Due dates
@@ -1226,10 +1229,9 @@ export function DueCalendar() {
                       }
                     }}
                     placeholder={
-                      process.env.NEXT_PUBLIC_APP_PROFILE === "blank"
-                        ? "e.g. Essay draft"
-                        : // eslint-disable-next-line @typescript-eslint/no-require-imports
-                          require("@/lib/personal/labels").personalEventPlaceholder()
+                      personal
+                        ? personalEventPlaceholder()
+                        : "e.g. Essay draft"
                     }
                     className="bg-white/80"
                   />
