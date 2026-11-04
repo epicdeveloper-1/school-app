@@ -1,7 +1,9 @@
 import { onAuthStateChanged, type Unsubscribe as AuthUnsubscribe } from "firebase/auth";
 import type { Unsubscribe as FsUnsubscribe } from "firebase/firestore";
+import { isBlankProfile } from "./app-profile";
 import {
   blobDocumentId,
+  readCloudBlob,
   subscribeUserBlobs,
   writeCloudStorage,
   type CloudBlob,
@@ -13,6 +15,7 @@ import {
   setCloudMirror,
   writeLocalStorageValue,
 } from "./storage";
+import { localIsTooSparseForCloud } from "./sync-guard";
 import { SYNC_STORAGE_KEYS, type SyncStorageKey } from "./sync-keys";
 import {
   loadSyncMeta,
@@ -126,20 +129,60 @@ async function mirrorKey(key: SyncStorageKey, value: string): Promise<void> {
   emitStatus({ lastSyncAt: now, lastError: null, syncing });
 }
 
+async function pullAllCloudBlobs(meta: SyncMetaStore): Promise<boolean> {
+  let applied = false;
+  await runWithoutCloudMirror(async () => {
+    for (const key of SYNC_STORAGE_KEYS) {
+      const blob = await readCloudBlob(key);
+      if (!blob) continue;
+      await writeLocalStorageValue(key, blob.value);
+      meta.keys[key] = {
+        localUpdatedAt: Date.now(),
+        lastAppliedCloudAt: blob.updatedAtMs,
+      };
+      applied = true;
+    }
+  });
+  if (applied) await reloadAllAppDataStores();
+  return applied;
+}
+
 async function firstLink(uid: string, meta: SyncMetaStore): Promise<boolean> {
   if (meta.firstLinkByUid[uid]) return false;
 
-  let hasLocal = false;
   const locals = new Map<SyncStorageKey, string>();
   for (const key of SYNC_STORAGE_KEYS) {
     const value = await readLocalStorageValue(key);
     if (value != null && value !== "") {
-      hasLocal = true;
       locals.set(key, value);
     }
   }
 
-  if (hasLocal) {
+  const hasLocal = locals.size > 0;
+  // Blank browser seeds are often empty shells — prefer cloud when it exists.
+  let preferPull = !hasLocal || isBlankProfile();
+  if (hasLocal && preferPull) {
+    let cloudHasRicher = false;
+    for (const key of SYNC_STORAGE_KEYS) {
+      const blob = await readCloudBlob(key);
+      if (!blob) continue;
+      if (localIsTooSparseForCloud(locals.get(key) ?? null, blob.value)) {
+        cloudHasRicher = true;
+        break;
+      }
+      // Any personal-tagged cloud blob: blank should adopt cloud, not push seed.
+      if (blob.clientProfile === "personal") {
+        cloudHasRicher = true;
+        break;
+      }
+    }
+    if (!cloudHasRicher) {
+      // Blank with only local seed and empty cloud — ok to push (friend start).
+      preferPull = false;
+    }
+  }
+
+  if (hasLocal && !preferPull) {
     for (const [key, value] of locals) {
       await writeCloudStorage(key, value);
       const now = Date.now();
@@ -149,21 +192,7 @@ async function firstLink(uid: string, meta: SyncMetaStore): Promise<boolean> {
       };
     }
   } else {
-    const { readCloudBlob } = await import("./cloud-storage");
-    let applied = false;
-    await runWithoutCloudMirror(async () => {
-      for (const key of SYNC_STORAGE_KEYS) {
-        const blob = await readCloudBlob(key);
-        if (!blob) continue;
-        await writeLocalStorageValue(key, blob.value);
-        meta.keys[key] = {
-          localUpdatedAt: Date.now(),
-          lastAppliedCloudAt: blob.updatedAtMs,
-        };
-        applied = true;
-      }
-    });
-    if (applied) await reloadAllAppDataStores();
+    await pullAllCloudBlobs(meta);
   }
 
   meta.firstLinkByUid[uid] = true;
@@ -188,9 +217,22 @@ async function applyRemoteBlobs(blobs: Map<string, CloudBlob>): Promise<void> {
       const cloudAt = blob.updatedAtMs ?? 0;
 
       if (lastApplied != null && cloudAt <= lastApplied) continue;
+
+      const local = await readLocalStorageValue(key);
+
+      // Sparse local must not LWW-win over richer cloud (blank seed wipe path).
+      if (localIsTooSparseForCloud(local, blob.value)) {
+        await writeLocalStorageValue(key, blob.value);
+        meta.keys[key] = {
+          localUpdatedAt: Date.now(),
+          lastAppliedCloudAt: blob.updatedAtMs,
+        };
+        changed = true;
+        continue;
+      }
+
       if (cloudAt && localUpdatedAt && cloudAt <= localUpdatedAt) {
         // Local is newer or equal — push local instead of applying stale cloud.
-        const local = await readLocalStorageValue(key);
         if (local != null) {
           try {
             await writeCloudStorage(key, local);
@@ -201,8 +243,7 @@ async function applyRemoteBlobs(blobs: Map<string, CloudBlob>): Promise<void> {
         continue;
       }
 
-      const current = await readLocalStorageValue(key);
-      if (current === blob.value) {
+      if (local === blob.value) {
         meta.keys[key] = {
           localUpdatedAt: keyMeta?.localUpdatedAt ?? Date.now(),
           lastAppliedCloudAt: blob.updatedAtMs,

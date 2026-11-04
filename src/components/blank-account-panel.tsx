@@ -47,6 +47,11 @@ export function BlankAccountPanel() {
         {email ? `Signed in as ${email}.` : "Signed in with Google."} Your planner
         is stored for this account and cached in this browser.
       </p>
+      <p className="mt-2 text-sm text-muted-foreground">
+        This is the blank friend site. It will not overwrite a personal desktop
+        backup. For the full Weekly Strategy UI on phone, use the personal web
+        link from the deploy (Hosting channel <code className="text-xs">personal</code>).
+      </p>
       {status?.lastSyncAt != null ? (
         <p className="mt-2 text-xs text-muted-foreground">
           Last sync: {formatSyncTime(status.lastSyncAt)}

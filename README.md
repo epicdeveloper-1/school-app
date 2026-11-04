@@ -4,6 +4,11 @@ School week planner — set one weekly focus, add daily priorities, and track su
 
 Optional **Google cloud sync** (personal desktop): add Firebase web keys to `.env.local`, rebuild, then Sign in with Google under Settings. Local writes stay first; Firestore mirrors your account only. Other Google accounts are unaffected.
 
+**Web profiles**
+
+- **Friend live site** — blank planner (`NEXT_PUBLIC_APP_PROFILE=blank`). Safe for other Google accounts. Will not overwrite blobs tagged as personal.
+- **Personal web (mobile)** — same UI as desktop. CI deploys Hosting channel `personal` on every push to `main` (see the workflow summary for the URL). Sign in with the same Google account as desktop.
+
 Also available as a **Windows desktop app** (Electron), same pattern as the Gift/mortgage app setup.
 
 ## Requirements
