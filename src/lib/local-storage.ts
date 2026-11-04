@@ -1,3 +1,16 @@
+export type DesktopBackupResult =
+  | {
+      ok: true;
+      day: string;
+      dir: string;
+      fileCount: number;
+      at: number;
+    }
+  | {
+      ok: false;
+      error?: string;
+    };
+
 declare global {
   interface Window {
     weeklyStrategy?: {
@@ -5,6 +18,8 @@ declare global {
       isDesktop: boolean;
       getItem: (key: string) => Promise<string | null>;
       setItem: (key: string, value: string) => Promise<boolean>;
+      /** Copy all local storage JSON into userData/backups/YYYY-MM-DD. */
+      backupDaily?: () => Promise<DesktopBackupResult>;
       openExternal?: (url: string) => Promise<boolean>;
     };
   }

@@ -6,6 +6,7 @@ import {
   startCloudSyncLifecycle,
   whenCloudSyncReady,
 } from "@/lib/cloud-sync";
+import { startDesktopBackupLifecycle } from "@/lib/desktop-backup";
 import { isFirebaseConfigured } from "@/lib/firebase-client";
 import { hasDesktopBridge } from "@/lib/storage";
 
@@ -24,9 +25,13 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(() => !needsBlockingSync());
 
   useEffect(() => {
-    const stop = startCloudSyncLifecycle();
+    const stopSync = startCloudSyncLifecycle();
+    const stopBackup = startDesktopBackupLifecycle();
     if (!needsBlockingSync()) {
-      return stop;
+      return () => {
+        stopBackup();
+        stopSync();
+      };
     }
     let active = true;
     void whenCloudSyncReady().then(() => {
@@ -34,7 +39,8 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
     });
     return () => {
       active = false;
-      stop();
+      stopBackup();
+      stopSync();
     };
   }, []);
 

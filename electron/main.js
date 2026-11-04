@@ -180,6 +180,56 @@ ipcMain.handle("storage:set", (_event, key, value) => {
   }
 });
 
+/** Local calendar day stamp (YYYY-MM-DD) for backup folder names. */
+function localDayStamp(date = new Date()) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+/**
+ * Copy every JSON blob from userData/storage into userData/backups/YYYY-MM-DD.
+ * Overwrites the same-day folder so a later open still gets a fresh copy.
+ */
+ipcMain.handle("storage:backup-daily", () => {
+  try {
+    const storageDir = path.join(app.getPath("userData"), "storage");
+    if (!fs.existsSync(storageDir)) {
+      return { ok: false, error: "No storage folder yet." };
+    }
+    const day = localDayStamp();
+    const destDir = path.join(app.getPath("userData"), "backups", day);
+    fs.mkdirSync(destDir, { recursive: true });
+
+    const files = fs
+      .readdirSync(storageDir)
+      .filter((name) => name.endsWith(".json"));
+    let copied = 0;
+    for (const name of files) {
+      fs.copyFileSync(
+        path.join(storageDir, name),
+        path.join(destDir, name),
+      );
+      copied += 1;
+    }
+
+    return {
+      ok: true,
+      day,
+      dir: destDir,
+      fileCount: copied,
+      at: Date.now(),
+    };
+  } catch (err) {
+    console.error("storage:backup-daily failed", err);
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+});
+
 const MIME = {
   ".html": "text/html; charset=utf-8",
   ".js": "application/javascript; charset=utf-8",
