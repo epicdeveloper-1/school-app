@@ -89,19 +89,22 @@ function chromeExecutable() {
   return candidates.find((candidate) => candidate && fs.existsSync(candidate)) || null;
 }
 
+/** Shared Chromium session so Google auth popups share cookies with the app. */
+const SESSION_PARTITION = "persist:weekly-strategy";
+
 /**
- * Google / Firebase Auth must stay inside this window. Redirecting those hosts
- * to Chrome breaks signInWithRedirect (session never returns to Electron).
+ * Google / Firebase Auth must stay inside Electron. Sending those hosts to
+ * Chrome breaks sign-in (session never returns to this app).
  */
 function isInAppAuthHost(hostname) {
   const host = String(hostname || "").toLowerCase();
   if (!host) return false;
   if (host === "127.0.0.1" || host === "localhost") return true;
-  if (host === "accounts.google.com" || host === "accounts.youtube.com") {
+  if (host === "google.com" || host.endsWith(".google.com")) return true;
+  if (host.endsWith(".firebaseapp.com") || host.endsWith(".web.app")) return true;
+  if (host.endsWith(".googleapis.com") || host.endsWith(".gstatic.com")) {
     return true;
   }
-  if (host.endsWith(".firebaseapp.com") || host.endsWith(".web.app")) return true;
-  if (host.endsWith(".googleapis.com")) return true;
   return false;
 }
 
@@ -115,6 +118,38 @@ function externalHttpUrl(raw) {
   } catch {
     return null;
   }
+}
+
+function attachAuthNavigationGuards(webContents) {
+  webContents.setWindowOpenHandler(({ url }) => {
+    if (externalHttpUrl(url)) {
+      openInGoogleChrome(url);
+      return { action: "deny" };
+    }
+    // Firebase signInWithPopup — no preload (do not expose IPC to Google pages).
+    return {
+      action: "allow",
+      overrideBrowserWindowOptions: {
+        width: 520,
+        height: 720,
+        autoHideMenuBar: true,
+        webPreferences: {
+          partition: SESSION_PARTITION,
+          contextIsolation: true,
+          nodeIntegration: false,
+          sandbox: true,
+        },
+      },
+    };
+  });
+
+  const blockExternal = (event, url) => {
+    if (!externalHttpUrl(url)) return;
+    event.preventDefault();
+    openInGoogleChrome(url);
+  };
+  webContents.on("will-navigate", blockExternal);
+  webContents.on("will-redirect", blockExternal);
 }
 
 /** Open a web link in Google Chrome. Falls back to the default browser. */
@@ -237,6 +272,7 @@ async function createWindow() {
     show: false,
     autoHideMenuBar: true,
     webPreferences: {
+      partition: SESSION_PARTITION,
       contextIsolation: true,
       nodeIntegration: false,
       preload: path.join(__dirname, "preload.js"),
@@ -247,19 +283,7 @@ async function createWindow() {
     mainWindow?.show();
   });
 
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (externalHttpUrl(url)) {
-      openInGoogleChrome(url);
-      return { action: "deny" };
-    }
-    return { action: "allow" };
-  });
-
-  mainWindow.webContents.on("will-navigate", (event, url) => {
-    if (!externalHttpUrl(url)) return;
-    event.preventDefault();
-    openInGoogleChrome(url);
-  });
+  attachAuthNavigationGuards(mainWindow.webContents);
 
   if (isDev) {
     await mainWindow.loadURL("http://127.0.0.1:43123");

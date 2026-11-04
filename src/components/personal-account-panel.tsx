@@ -1,12 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import {
-  GoogleAuthProvider,
-  onAuthStateChanged,
-  signInWithRedirect,
-  signOut,
-} from "firebase/auth";
+import { onAuthStateChanged, signOut } from "firebase/auth";
 import { Button } from "@/components/ui/button";
 import {
   subscribeSyncStatus,
@@ -17,19 +12,10 @@ import {
   isFirebaseConfigured,
   takeRedirectResult,
 } from "@/lib/firebase-client";
-
-function authErrorMessage(error: unknown): string {
-  if (error && typeof error === "object" && "code" in error) {
-    const code = String(error.code);
-    if (code === "auth/unauthorized-domain") {
-      return "This app address is not allowed for Google sign-in yet. Add 127.0.0.1 / localhost in Firebase Auth settings.";
-    }
-    if (code === "auth/popup-blocked" || code === "auth/web-storage-unsupported") {
-      return "This browser blocked Google sign-in. Allow cookies and storage, then try again.";
-    }
-  }
-  return "Google sign-in did not finish. Try again.";
-}
+import {
+  googleSignInErrorMessage,
+  signInWithGoogle,
+} from "@/lib/google-sign-in";
 
 function formatSyncTime(ms: number | null): string {
   if (ms == null) return "Not synced yet";
@@ -55,7 +41,7 @@ export function PersonalAccountPanel() {
     if (!configured) return;
     const auth = getFirebaseAuth();
     void takeRedirectResult(auth).catch((err: unknown) => {
-      setError(authErrorMessage(err));
+      setError(googleSignInErrorMessage(err));
     });
     const unsubAuth = onAuthStateChanged(auth, (user) => {
       setEmail(user?.email ?? null);
@@ -126,16 +112,14 @@ export function PersonalAccountPanel() {
             onClick={() => {
               setPending(true);
               setError(null);
-              void signInWithRedirect(
-                getFirebaseAuth(),
-                new GoogleAuthProvider(),
-              ).catch((err: unknown) => {
-                setPending(false);
-                setError(authErrorMessage(err));
-              });
+              void signInWithGoogle()
+                .catch((err: unknown) => {
+                  setError(googleSignInErrorMessage(err));
+                })
+                .finally(() => setPending(false));
             }}
           >
-            {pending ? "Redirecting to Google…" : "Sign in with Google"}
+            {pending ? "Signing in…" : "Sign in with Google"}
           </Button>
         )}
       </div>
