@@ -89,13 +89,28 @@ function chromeExecutable() {
   return candidates.find((candidate) => candidate && fs.existsSync(candidate)) || null;
 }
 
+/**
+ * Google / Firebase Auth must stay inside this window. Redirecting those hosts
+ * to Chrome breaks signInWithRedirect (session never returns to Electron).
+ */
+function isInAppAuthHost(hostname) {
+  const host = String(hostname || "").toLowerCase();
+  if (!host) return false;
+  if (host === "127.0.0.1" || host === "localhost") return true;
+  if (host === "accounts.google.com" || host === "accounts.youtube.com") {
+    return true;
+  }
+  if (host.endsWith(".firebaseapp.com") || host.endsWith(".web.app")) return true;
+  if (host.endsWith(".googleapis.com")) return true;
+  return false;
+}
+
+/** External http(s) URL to open in Chrome, or null to keep navigation in-app. */
 function externalHttpUrl(raw) {
   try {
     const parsed = new URL(String(raw));
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
-    if (parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost") {
-      return null;
-    }
+    if (isInAppAuthHost(parsed.hostname)) return null;
     return parsed.toString();
   } catch {
     return null;
