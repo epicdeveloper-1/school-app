@@ -51,6 +51,23 @@ export function formatDuration(minutes: number): string {
   return `${h}h ${rem}m`;
 }
 
+/**
+ * Parse a board-box duration inside brackets.
+ * Bare numbers default to hours (`[2]` → 2h). With `h` / `m` (or `1:30`),
+ * same rules as {@link parseDuration}.
+ */
+export function parseBoardDuration(inner: string): number | null {
+  const raw = inner.trim().toLowerCase().replace(/,/g, "");
+  if (!raw) return null;
+
+  if (/^\d+(?:\.\d+)?$/.test(raw)) {
+    const total = Math.round(Number(raw) * 60);
+    return total > 0 ? total : null;
+  }
+
+  return parseDuration(raw);
+}
+
 /** Parse `H:mm` or `h:mm am/pm` into minutes from midnight (0–1439). */
 export function parseClockTime(input: string): number | null {
   const raw = input.trim().toLowerCase();
@@ -298,6 +315,94 @@ export function detachBoardTime(text: string): {
     .replace(/[ \t]{2,}/g, " ")
     .trim();
   return { text: next, time: found.time };
+}
+
+/**
+ * If `before` ends with a `[duration]`, return that duration and the text
+ * with the brackets removed. Skips markdown links (`[label](url)`).
+ */
+export function matchTrailingBoardDuration(before: string): {
+  estimateMinutes: number;
+  textWithoutMatch: string;
+  matchedText: string;
+} | null {
+  if (!before.endsWith("]")) return null;
+  const close = before.length - 1;
+  let depth = 0;
+  for (let i = close; i >= 0; i--) {
+    const ch = before[i];
+    if (ch === "]") depth += 1;
+    else if (ch === "[") {
+      depth -= 1;
+      if (depth === 0) {
+        const inner = before.slice(i + 1, close);
+        const estimateMinutes = parseBoardDuration(inner);
+        if (!estimateMinutes) return null;
+        return {
+          estimateMinutes,
+          textWithoutMatch: before.slice(0, i).replace(/\s+$/, ""),
+          matchedText: before.slice(i),
+        };
+      }
+    }
+  }
+  return null;
+}
+
+/** Space after a trailing `[duration]` lifts it out of the text. */
+export function applyBoardDurationFromSpace(
+  value: string,
+  cursor: number,
+): {
+  value: string;
+  estimateMinutes: number;
+  cursor: number;
+  typedValue: string;
+  typedCursor: number;
+} | null {
+  const before = value.slice(0, cursor);
+  const after = value.slice(cursor);
+  // Keep markdown `[label](url)` intact when the cursor sits on the `]`.
+  if (after.startsWith("(")) return null;
+  const match = matchTrailingBoardDuration(before);
+  if (!match) return null;
+  const nextValue =
+    match.textWithoutMatch.length > 0 && after.length > 0
+      ? `${match.textWithoutMatch} ${after.replace(/^\s+/, "")}`
+      : match.textWithoutMatch + after.replace(/^\s+/, "");
+  return {
+    value: nextValue,
+    estimateMinutes: match.estimateMinutes,
+    cursor: match.textWithoutMatch.length,
+    typedValue: `${before} ${after}`,
+    typedCursor: before.length + 1,
+  };
+}
+
+/** Pull the last `[duration]` out of box text. Other brackets stay. */
+export function detachBoardDuration(text: string): {
+  text: string;
+  estimateMinutes: number | null;
+} {
+  const re = /\[([^\]]*)\]/g;
+  let found: {
+    index: number;
+    length: number;
+    estimateMinutes: number;
+  } | null = null;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(text)) !== null) {
+    const afterIdx = match.index + match[0].length;
+    if (text[afterIdx] === "(") continue;
+    const estimateMinutes = parseBoardDuration(match[1] ?? "");
+    if (!estimateMinutes) continue;
+    found = { index: match.index, length: match[0].length, estimateMinutes };
+  }
+  if (!found) return { text, estimateMinutes: null };
+  const next = `${text.slice(0, found.index)}${text.slice(found.index + found.length)}`
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+  return { text: next, estimateMinutes: found.estimateMinutes };
 }
 
 /** Store as `HH:mm` 24h. Accepts am/pm or 24h input. */

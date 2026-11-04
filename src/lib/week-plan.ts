@@ -18,7 +18,7 @@ export type TaskItem = {
   /** @deprecated Prefer `tags` including `"optional"`. Kept for older saved plans. */
   optional?: boolean;
   tags?: BoxTag[];
-  /** Estimated duration in minutes (e.g. 45, 90). */
+  /** Estimated duration in minutes (e.g. 45, 90), set from a `[duration]` in the box text. */
   estimateMinutes?: number;
   /** Start clock as `HH:mm` (24h), set from a `(time range)` in the box text. */
   startTime?: string;

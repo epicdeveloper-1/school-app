@@ -47,6 +47,8 @@ import {
 import { handleTagChipKey } from "@/lib/tag-chip-key";
 import { DATA_SYNC_EVENT } from "@/lib/tag-data-sync";
 import type { TagChipUndoState } from "@/lib/tag-chip-key";
+import { handleDurationChipKey } from "@/lib/duration-chip-key";
+import type { DurationChipUndoState } from "@/lib/duration-chip-key";
 import { handleTimeChipKey } from "@/lib/time-chip-key";
 import type { TimeChipUndoState } from "@/lib/time-chip-key";
 import {
@@ -57,7 +59,9 @@ import {
 } from "@/lib/task-links";
 import { normalizeSubBoxMap, type SubBox } from "@/lib/sub-boxes";
 import {
+  detachBoardDuration,
   detachBoardTime,
+  formatDuration,
   formatTimeRange,
   parseClockTime,
   type BoardTimeRange,
@@ -184,6 +188,18 @@ function emptyDraftTimes(): Record<DayKey, BoardTimeRange | null> {
   };
 }
 
+function emptyDraftEstimates(): Record<DayKey, number | null> {
+  return {
+    monday: null,
+    tuesday: null,
+    wednesday: null,
+    thursday: null,
+    friday: null,
+    saturday: null,
+    sunday: null,
+  };
+}
+
 function timeFromClock(
   startTime?: string,
   endTime?: string,
@@ -209,6 +225,21 @@ function resolveBoxTime(
   const detached = detachBoardTime(text);
   if (detached.time) return { text: detached.text, time: detached.time };
   return { text: text.trim(), time: chip };
+}
+
+/** Prefer a `[duration]` still typed in the text; otherwise keep the space-converted chip. */
+function resolveBoxDuration(
+  text: string,
+  chip: number | null,
+): { text: string; estimateMinutes: number | null } {
+  const detached = detachBoardDuration(text);
+  if (detached.estimateMinutes) {
+    return {
+      text: detached.text,
+      estimateMinutes: detached.estimateMinutes,
+    };
+  }
+  return { text: text.trim(), estimateMinutes: chip };
 }
 
 function EditingTimeChip({
@@ -718,6 +749,8 @@ export function WeeklyStrategyBoard() {
     useState<Record<DayKey, BoxTag[]>>(emptyDraftTags);
   const [draftTimes, setDraftTimes] =
     useState<Record<DayKey, BoardTimeRange | null>>(emptyDraftTimes);
+  const [draftEstimates, setDraftEstimates] =
+    useState<Record<DayKey, number | null>>(emptyDraftEstimates);
   const [savedFlash, setSavedFlash] = useState(false);
   const [editingTask, setEditingTask] = useState<{
     day: DayKey;
@@ -735,6 +768,7 @@ export function WeeklyStrategyBoard() {
   const suppressEditBlurRef = useRef(false);
   const tagChipUndoRef = useRef<TagChipUndoState | null>(null);
   const timeChipUndoRef = useRef<TimeChipUndoState | null>(null);
+  const durationChipUndoRef = useRef<DurationChipUndoState | null>(null);
   const [moveDay, setMoveDay] = useState<DayKey | null>(null);
   const [dragTaskId, setDragTaskId] = useState<string | null>(null);
   const [dragHeight, setDragHeight] = useState(0);
@@ -959,17 +993,30 @@ export function WeeklyStrategyBoard() {
   }
 
   function addTask(day: DayKey) {
-    const resolved = resolveBoxTime(drafts[day], draftTimes[day]);
+    const resolvedTime = resolveBoxTime(drafts[day], draftTimes[day]);
+    const resolved = resolveBoxDuration(
+      resolvedTime.text,
+      draftEstimates[day],
+    );
     const text = resolved.text.trim();
     const tags = normalizeTaskTags(draftTags[day]);
-    const time = resolved.time;
-    if ((!text && tags.length === 0 && !time) || !plan) return;
+    const time = resolvedTime.time;
+    const estimateMinutes = resolved.estimateMinutes;
+    if (
+      (!text && tags.length === 0 && !time && !estimateMinutes) ||
+      !plan
+    ) {
+      return;
+    }
     const item: TaskItem = {
       id: createId(),
       text,
       done: false,
       tags,
       ...(time ? clockFields(time) : {}),
+      ...(estimateMinutes && estimateMinutes > 0
+        ? { estimateMinutes }
+        : {}),
     };
     updatePlan((prev) => ({
       ...prev,
@@ -978,7 +1025,9 @@ export function WeeklyStrategyBoard() {
     setDrafts((d) => ({ ...d, [day]: "" }));
     setDraftTags((d) => ({ ...d, [day]: [] }));
     setDraftTimes((d) => ({ ...d, [day]: null }));
+    setDraftEstimates((d) => ({ ...d, [day]: null }));
     timeChipUndoRef.current = null;
+    durationChipUndoRef.current = null;
   }
 
   function toggleTask(day: DayKey, id: string, targetWeek = plan?.weekOf) {
@@ -1108,10 +1157,12 @@ export function WeeklyStrategyBoard() {
     if (!cur) return;
     editingTaskRef.current = null;
     setEditingTask(null);
-    const resolved = resolveBoxTime(cur.value, cur.time);
-    const text = resolved.text.trim();
+    const resolvedTime = resolveBoxTime(cur.value, cur.time);
+    const detachedDuration = detachBoardDuration(resolvedTime.text);
+    const text = detachedDuration.text.trim();
     const tags = normalizeTaskTags(cur.tags);
-    const time = resolved.time;
+    const time = resolvedTime.time;
+    const estimateFromText = detachedDuration.estimateMinutes;
     if (!text && tags.length === 0 && !time) return;
 
     if (cur.source === "routine" && cur.todoId) {
@@ -1123,6 +1174,9 @@ export function WeeklyStrategyBoard() {
         day: existing?.day ?? cur.day,
         ...(time ? clockFields(time) : {}),
       });
+      if (estimateFromText) {
+        setOverlayEstimate(cur.id, estimateFromText);
+      }
       return;
     }
 
@@ -1149,6 +1203,9 @@ export function WeeklyStrategyBoard() {
             delete next.startTime;
             delete next.endTime;
           }
+          if (estimateFromText) {
+            next.estimateMinutes = estimateFromText;
+          }
           return next;
         }),
       },
@@ -1171,6 +1228,7 @@ export function WeeklyStrategyBoard() {
 
   function editStoredTime() {
     timeChipUndoRef.current = null;
+    durationChipUndoRef.current = null;
     tagChipUndoRef.current = null;
     setEditingTask((cur) => {
       if (!cur?.time) return cur;
@@ -1184,6 +1242,24 @@ export function WeeklyStrategyBoard() {
       editingTaskRef.current = next;
       return next;
     });
+  }
+
+  function applyEditingDuration(
+    cur: NonNullable<typeof editingTask>,
+    estimateMinutes: number | null,
+  ) {
+    const minutes =
+      estimateMinutes && estimateMinutes > 0 ? estimateMinutes : undefined;
+    if (cur.source === "routine") {
+      setOverlayEstimate(cur.id, minutes);
+      return;
+    }
+    setTaskEstimate(
+      cur.sourceDay ?? cur.day,
+      cur.id,
+      minutes,
+      cur.sourceWeekOf,
+    );
   }
 
   if (loadState === "loading" || !plan) {
@@ -1249,11 +1325,16 @@ export function WeeklyStrategyBoard() {
   function addDraftSubBox(day: DayKey) {
     const rows = sortedDayRows(day);
     const parent = [...rows].reverse().find((row) => !row.carry) ?? null;
-    const resolved = resolveBoxTime(drafts[day], draftTimes[day]);
+    const resolvedTime = resolveBoxTime(drafts[day], draftTimes[day]);
+    const resolved = resolveBoxDuration(
+      resolvedTime.text,
+      draftEstimates[day],
+    );
     if (
       !parent ||
       draftTags[day].length > 0 ||
-      resolved.time
+      resolvedTime.time ||
+      resolved.estimateMinutes
     ) {
       addTask(day);
       return;
@@ -1261,6 +1342,7 @@ export function WeeklyStrategyBoard() {
     addSubBox(weekOf, boardRowId(parent), resolved.text.trim());
     setDrafts((current) => ({ ...current, [day]: "" }));
     timeChipUndoRef.current = null;
+    durationChipUndoRef.current = null;
     tagChipUndoRef.current = null;
   }
 
@@ -2585,6 +2667,7 @@ export function WeeklyStrategyBoard() {
                                     const value = e.target.value;
                                     tagChipUndoRef.current = null;
                                     timeChipUndoRef.current = null;
+                                    durationChipUndoRef.current = null;
                                     setEditingTask((cur) => {
                                       if (!cur) return cur;
                                       const next = { ...cur, value };
@@ -2601,12 +2684,40 @@ export function WeeklyStrategyBoard() {
                                         undoRef: timeChipUndoRef,
                                         onChange: ({ value, time }) => {
                                           tagChipUndoRef.current = null;
+                                          durationChipUndoRef.current = null;
                                           setEditingTask((cur) => {
                                             if (!cur) return cur;
                                             const next = { ...cur, value, time };
                                             editingTaskRef.current = next;
                                             return next;
                                           });
+                                        },
+                                      })
+                                    ) {
+                                      return;
+                                    }
+                                    if (
+                                      handleDurationChipKey(e, {
+                                        key: `edit:${editingTask.id}`,
+                                        value: editingTask.value,
+                                        estimateMinutes:
+                                          estimateMinutesFor(row) ?? null,
+                                        undoRef: durationChipUndoRef,
+                                        onChange: ({
+                                          value,
+                                          estimateMinutes,
+                                        }) => {
+                                          tagChipUndoRef.current = null;
+                                          timeChipUndoRef.current = null;
+                                          const cur = editingTaskRef.current;
+                                          if (!cur) return;
+                                          const next = { ...cur, value };
+                                          editingTaskRef.current = next;
+                                          setEditingTask(next);
+                                          applyEditingDuration(
+                                            next,
+                                            estimateMinutes,
+                                          );
                                         },
                                       })
                                     ) {
@@ -2620,6 +2731,7 @@ export function WeeklyStrategyBoard() {
                                         undoRef: tagChipUndoRef,
                                         onChange: ({ value, tags }) => {
                                           timeChipUndoRef.current = null;
+                                          durationChipUndoRef.current = null;
                                           setEditingTask((cur) => {
                                             if (!cur) return cur;
                                             const next = { ...cur, value, tags };
@@ -2682,6 +2794,7 @@ export function WeeklyStrategyBoard() {
                                   onChange={(tags) => {
                                     tagChipUndoRef.current = null;
                                     timeChipUndoRef.current = null;
+                                    durationChipUndoRef.current = null;
                                     setEditingTags(tags);
                                   }}
                                 />
@@ -2812,6 +2925,7 @@ export function WeeklyStrategyBoard() {
                                   const value = e.target.value;
                                   tagChipUndoRef.current = null;
                                   timeChipUndoRef.current = null;
+                                  durationChipUndoRef.current = null;
                                   setEditingTask((cur) => {
                                     if (!cur) return cur;
                                     const next = { ...cur, value };
@@ -2828,12 +2942,40 @@ export function WeeklyStrategyBoard() {
                                       undoRef: timeChipUndoRef,
                                       onChange: ({ value, time }) => {
                                         tagChipUndoRef.current = null;
+                                        durationChipUndoRef.current = null;
                                         setEditingTask((cur) => {
                                           if (!cur) return cur;
                                           const next = { ...cur, value, time };
                                           editingTaskRef.current = next;
                                           return next;
                                         });
+                                      },
+                                    })
+                                  ) {
+                                    return;
+                                  }
+                                  if (
+                                    handleDurationChipKey(e, {
+                                      key: `edit:${editingTask.id}`,
+                                      value: editingTask.value,
+                                      estimateMinutes:
+                                        estimateMinutesFor(row) ?? null,
+                                      undoRef: durationChipUndoRef,
+                                      onChange: ({
+                                        value,
+                                        estimateMinutes,
+                                      }) => {
+                                        tagChipUndoRef.current = null;
+                                        timeChipUndoRef.current = null;
+                                        const cur = editingTaskRef.current;
+                                        if (!cur) return;
+                                        const next = { ...cur, value };
+                                        editingTaskRef.current = next;
+                                        setEditingTask(next);
+                                        applyEditingDuration(
+                                          next,
+                                          estimateMinutes,
+                                        );
                                       },
                                     })
                                   ) {
@@ -2847,6 +2989,7 @@ export function WeeklyStrategyBoard() {
                                       undoRef: tagChipUndoRef,
                                       onChange: ({ value, tags }) => {
                                         timeChipUndoRef.current = null;
+                                        durationChipUndoRef.current = null;
                                         setEditingTask((cur) => {
                                           if (!cur) return cur;
                                           const next = { ...cur, value, tags };
@@ -2908,6 +3051,7 @@ export function WeeklyStrategyBoard() {
                                 onChange={(tags) => {
                                   tagChipUndoRef.current = null;
                                   timeChipUndoRef.current = null;
+                                  durationChipUndoRef.current = null;
                                   setEditingTags(tags);
                                 }}
                               />
@@ -2998,6 +3142,7 @@ export function WeeklyStrategyBoard() {
                     onChange={(e) => {
                       tagChipUndoRef.current = null;
                       timeChipUndoRef.current = null;
+                      durationChipUndoRef.current = null;
                       setDrafts((d) => ({ ...d, [day.key]: e.target.value }));
                     }}
                     onKeyDown={(e) => {
@@ -3009,8 +3154,28 @@ export function WeeklyStrategyBoard() {
                           undoRef: timeChipUndoRef,
                           onChange: ({ value, time }) => {
                             tagChipUndoRef.current = null;
+                            durationChipUndoRef.current = null;
                             setDrafts((d) => ({ ...d, [day.key]: value }));
                             setDraftTimes((d) => ({ ...d, [day.key]: time }));
+                          },
+                        })
+                      ) {
+                        return;
+                      }
+                      if (
+                        handleDurationChipKey(e, {
+                          key: `draft:${day.key}`,
+                          value: drafts[day.key],
+                          estimateMinutes: draftEstimates[day.key],
+                          undoRef: durationChipUndoRef,
+                          onChange: ({ value, estimateMinutes }) => {
+                            tagChipUndoRef.current = null;
+                            timeChipUndoRef.current = null;
+                            setDrafts((d) => ({ ...d, [day.key]: value }));
+                            setDraftEstimates((d) => ({
+                              ...d,
+                              [day.key]: estimateMinutes,
+                            }));
                           },
                         })
                       ) {
@@ -3024,6 +3189,7 @@ export function WeeklyStrategyBoard() {
                           undoRef: tagChipUndoRef,
                           onChange: ({ value, tags }) => {
                             timeChipUndoRef.current = null;
+                            durationChipUndoRef.current = null;
                             setDrafts((d) => ({ ...d, [day.key]: value }));
                             setDraftTags((d) => ({ ...d, [day.key]: tags }));
                           },
@@ -3086,6 +3252,32 @@ export function WeeklyStrategyBoard() {
                         draftTimes[day.key]!.endTime,
                       )}
                       )
+                    </button>
+                  ) : null}
+                  {draftEstimates[day.key] ? (
+                    <button
+                      type="button"
+                      title="Edit duration"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        const minutes = draftEstimates[day.key];
+                        if (!minutes) return;
+                        const chunk = `[${formatDuration(minutes)}]`;
+                        setDrafts((d) => {
+                          const current = d[day.key].trim();
+                          return {
+                            ...d,
+                            [day.key]: current
+                              ? `${current} ${chunk}`
+                              : chunk,
+                          };
+                        });
+                        setDraftEstimates((d) => ({ ...d, [day.key]: null }));
+                        durationChipUndoRef.current = null;
+                      }}
+                      className="shrink-0 text-xs text-muted-foreground hover:text-foreground"
+                    >
+                      [{formatDuration(draftEstimates[day.key]!)}]
                     </button>
                   ) : null}
                   <BoxTagPicker
