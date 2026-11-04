@@ -15,7 +15,13 @@ service cloud.firestore {
         && request.resource.data.value is string
         && request.resource.data.value.size() < 900000
         && request.resource.data.updatedAt == request.time
-        && request.resource.data.clientProfile in ['personal', 'blank'];
+        // clientProfile is optional so older desktop builds still sync;
+        // when present it must be a known app profile.
+        && (
+          !('clientProfile' in request.resource.data)
+          || request.resource.data.clientProfile == 'personal'
+          || request.resource.data.clientProfile == 'blank'
+        );
 
       allow delete: if false;
     }
