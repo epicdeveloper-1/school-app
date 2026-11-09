@@ -39,16 +39,13 @@ export function HeroDetail() {
   if (personal) return personalHeroDetail();
   return cloud
     ? "Add your own tasks and dates. They are saved to your Google account."
-    : "Add your own tasks and dates. Everything stays on this computer.";
+    : "Add your own tasks and dates. Everything saves on this computer first; optional Google sync is in Settings.";
 }
 
 export function SettingsIntro() {
   const cloud = useIsCloudProfile();
   if (cloud) {
     return "Customize how your planner works. Changes save to your Google account.";
-  }
-  if (isBlankProfile()) {
-    return "Customize how your planner works. Changes save locally on this device.";
   }
   return "Customize how your planner works. Changes save on this device first; optional Google sync is below.";
 }
