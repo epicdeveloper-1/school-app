@@ -33,6 +33,8 @@ import {
 export const DATA_SYNC_EVENT = "weekly-strategy:data-synced";
 
 export async function reloadAllAppDataStores(): Promise<void> {
+  // Registry must load before any store that calls normalizeTaskTags.
+  await loadTagRegistry();
   await reloadPlansStoreFromDisk();
   await reloadDueEventsStoreFromDisk();
   await reloadRecurringTodosStoreFromDisk();
@@ -40,7 +42,6 @@ export async function reloadAllAppDataStores(): Promise<void> {
   await reloadCalendarWeekStartFromDisk();
   await reloadBoardCompletedDisplayFromDisk();
   await reloadCs234ChecklistFromDisk();
-  await loadTagRegistry();
   if (typeof window !== "undefined") {
     window.dispatchEvent(new Event(DATA_SYNC_EVENT));
   }
@@ -126,7 +127,10 @@ export async function replaceTagLabelInAllData(
     );
     await writeStorage(
       DUE_EVENTS_STORAGE_KEY,
-      JSON.stringify({ ...dueStore, events }),
+      JSON.stringify({
+        events,
+        seedVersion: dueStore.seedVersion,
+      }),
     );
   }
 
@@ -169,7 +173,10 @@ export async function purgeTagFromAllData(tagId: BoxTag): Promise<void> {
     }));
     await writeStorage(
       DUE_EVENTS_STORAGE_KEY,
-      JSON.stringify({ ...dueStore, events }),
+      JSON.stringify({
+        events,
+        seedVersion: dueStore.seedVersion,
+      }),
     );
   }
 
@@ -183,7 +190,10 @@ export async function purgeTagFromAllData(tagId: BoxTag): Promise<void> {
     }));
     await writeStorage(
       RECURRING_TODOS_STORAGE_KEY,
-      JSON.stringify({ ...recurring, todos }),
+      JSON.stringify({
+        todos,
+        seedVersion: recurring.seedVersion,
+      }),
     );
   }
 
@@ -231,7 +241,10 @@ export async function renameTagIdInAllData(
     }));
     await writeStorage(
       DUE_EVENTS_STORAGE_KEY,
-      JSON.stringify({ ...dueStore, events }),
+      JSON.stringify({
+        events,
+        seedVersion: dueStore.seedVersion,
+      }),
     );
   }
 
@@ -245,7 +258,10 @@ export async function renameTagIdInAllData(
     }));
     await writeStorage(
       RECURRING_TODOS_STORAGE_KEY,
-      JSON.stringify({ ...recurring, todos }),
+      JSON.stringify({
+        todos,
+        seedVersion: recurring.seedVersion,
+      }),
     );
   }
 

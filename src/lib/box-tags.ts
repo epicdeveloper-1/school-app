@@ -41,80 +41,60 @@ export function defaultBoxTags(): BoxTagMeta[] {
   return hasPersonalFeatures() ? PERSONAL_BOX_TAGS : BLANK_BOX_TAGS;
 }
 
-let runtimeTags: BoxTagMeta[] = [...BLANK_BOX_TAGS];
-
-
+// Prefer profile defaults so personal builds are not stuck on blank-only
+// tags before the registry finishes loading (avoids sync races stripping ids).
+let runtimeTags: BoxTagMeta[] = [...defaultBoxTags()];
 
 export function setRuntimeBoxTags(tags: readonly BoxTagMeta[]): void {
-
   runtimeTags = [...tags];
-
 }
-
-
 
 export function getBoxTags(): readonly BoxTagMeta[] {
-
   return runtimeTags;
-
 }
-
-
 
 /** @deprecated Use getBoxTags() or useTags(); kept for non-React modules at init. */
 
 export const BOX_TAGS: BoxTagMeta[] = BLANK_BOX_TAGS;
 
-
-
 function tagIdSet(): Set<BoxTag> {
-
   return new Set(runtimeTags.map((t) => t.id));
-
 }
 
-
-
 export function boxTagMeta(id: BoxTag): BoxTagMeta {
-
   const found = runtimeTags.find((t) => t.id === id);
 
   if (found) return found;
 
   return {
-
     id,
-
     label: id,
-
     prefix: id,
-
     color: "#6b7f88",
-
   };
-
 }
 
-
-
+/**
+ * Deduplicate tags. Known registry ids keep settings order; unknown ids are
+ * preserved (appended) so a late/empty registry cannot wipe synced tags.
+ */
 export function normalizeTaskTags(tags?: readonly string[] | null): BoxTag[] {
-
   const ids = tagIdSet();
-
   const seen = new Set<BoxTag>();
+  const unknown: BoxTag[] = [];
 
   for (const raw of tags ?? []) {
-
-    if (!ids.has(raw)) continue;
-
-    seen.add(raw);
-
+    if (typeof raw !== "string") continue;
+    const id = raw.trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    if (!ids.has(id)) unknown.push(id);
   }
 
-  // Display / storage order follows the settings registry order.
-
-  return runtimeTags.map((t) => t.id).filter((id) => seen.has(id));
-
+  const orderedKnown = runtimeTags
+    .map((t) => t.id)
+    .filter((id) => seen.has(id));
+  return [...orderedKnown, ...unknown];
 }
 
 

@@ -40,6 +40,8 @@ export type RecurringTodosStore = {
 };
 
 export const RECURRING_TODOS_STORAGE_KEY = "recurring-todos-v1";
+/** Done flags only — separate sync doc so toggles cannot overwrite todo times/tags. */
+export const RECURRING_TODOS_DONE_STORAGE_KEY = "recurring-todos-done-v1";
 /** 2 = drop Vocal Techniques / Water Boys / Catch-up (calendar owns first two). */
 export const RECURRING_TODOS_SEED_VERSION = 2;
 
@@ -149,20 +151,41 @@ function emptyStore(): RecurringTodosStore {
   };
 }
 
+function parseDoneByWeek(raw: string | null): Record<string, boolean> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as { doneByWeek?: Record<string, boolean> };
+    if (parsed?.doneByWeek && typeof parsed.doneByWeek === "object") {
+      return parsed.doneByWeek;
+    }
+  } catch {
+    /* ignore */
+  }
+  return {};
+}
+
 async function readStoreFromDisk(): Promise<RecurringTodosStore> {
-  const raw = await readStorage(RECURRING_TODOS_STORAGE_KEY);
+  const [raw, doneRaw] = await Promise.all([
+    readStorage(RECURRING_TODOS_STORAGE_KEY),
+    readStorage(RECURRING_TODOS_DONE_STORAGE_KEY),
+  ]);
+  const separateDone = parseDoneByWeek(doneRaw);
+
   if (raw) {
     try {
       const parsed = JSON.parse(raw) as RecurringTodosStore;
       if (parsed && Array.isArray(parsed.todos)) {
+        const embeddedDone =
+          parsed.doneByWeek && typeof parsed.doneByWeek === "object"
+            ? parsed.doneByWeek
+            : {};
+        // Separate done doc wins on key conflicts; keep legacy embedded as fallback.
+        const doneByWeek = { ...embeddedDone, ...separateDone };
         return migrateStore({
           todos: parsed.todos
             .map(normalizeTodo)
             .filter((t): t is RecurringTodo => !!t),
-          doneByWeek:
-            parsed.doneByWeek && typeof parsed.doneByWeek === "object"
-              ? parsed.doneByWeek
-              : {},
+          doneByWeek,
           seedVersion: parsed.seedVersion ?? 1,
         });
       }
@@ -172,14 +195,38 @@ async function readStoreFromDisk(): Promise<RecurringTodosStore> {
   }
   return {
     todos: buildRecurringTodoSeed(),
-    doneByWeek: {},
+    doneByWeek: separateDone,
     seedVersion: RECURRING_TODOS_SEED_VERSION,
   };
 }
 
-async function persist(): Promise<void> {
+type TodosBlob = {
+  todos: RecurringTodo[];
+  seedVersion?: number;
+};
+
+type DoneBlob = {
+  doneByWeek: Record<string, boolean>;
+};
+
+async function persistTodos(): Promise<void> {
   if (!memoryStore) return;
-  await writeStorage(RECURRING_TODOS_STORAGE_KEY, JSON.stringify(memoryStore));
+  const blob: TodosBlob = {
+    todos: memoryStore.todos,
+    seedVersion: memoryStore.seedVersion,
+  };
+  await writeStorage(RECURRING_TODOS_STORAGE_KEY, JSON.stringify(blob));
+}
+
+async function persistDone(): Promise<void> {
+  if (!memoryStore) return;
+  const blob: DoneBlob = { doneByWeek: memoryStore.doneByWeek };
+  await writeStorage(RECURRING_TODOS_DONE_STORAGE_KEY, JSON.stringify(blob));
+}
+
+/** Persist todos + done (migration / seed only). Prefer persistTodos or persistDone. */
+async function persist(): Promise<void> {
+  await Promise.all([persistTodos(), persistDone()]);
 }
 
 export async function reloadRecurringTodosStoreFromDisk(): Promise<RecurringTodosStore> {
@@ -199,6 +246,16 @@ export async function initRecurringTodosStore(): Promise<RecurringTodosStore> {
     memoryStore.seedVersion = RECURRING_TODOS_SEED_VERSION;
     // Only persist when we actually seeded — not on every cold load.
     await persist();
+  } else {
+    // Migrate embedded doneByWeek into its own sync doc once.
+    const doneRaw = await readStorage(RECURRING_TODOS_DONE_STORAGE_KEY);
+    if (
+      !doneRaw &&
+      memoryStore.doneByWeek &&
+      Object.keys(memoryStore.doneByWeek).length > 0
+    ) {
+      await persistDone();
+    }
   }
   return memoryStore;
 }
@@ -247,7 +304,7 @@ export async function toggleRecurringTodo(
   const key = `${todoId}:${weekOf}`;
   const next = !memoryStore.doneByWeek[key];
   memoryStore.doneByWeek = { ...memoryStore.doneByWeek, [key]: next };
-  await persist();
+  await persistDone();
   notify();
   return next;
 }
@@ -286,7 +343,7 @@ export async function saveRecurringTodo(
   } else {
     memoryStore.todos = [...memoryStore.todos, next];
   }
-  await persist();
+  await persistTodos();
   notify();
   return next;
 }
@@ -296,7 +353,7 @@ export async function deleteRecurringTodo(id: string): Promise<void> {
   if (!memoryStore) await initRecurringTodosStore();
   if (!memoryStore) return;
   memoryStore.todos = memoryStore.todos.filter((t) => t.id !== id);
-  await persist();
+  await persistTodos();
   notify();
 }
 

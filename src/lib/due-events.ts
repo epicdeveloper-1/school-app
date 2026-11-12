@@ -149,6 +149,8 @@ export type DueEventsStore = {
 };
 
 export const DUE_EVENTS_STORAGE_KEY = "due-events-v1";
+/** Box completion flags only — separate sync doc so toggles cannot overwrite event tags/times. */
+export const DUE_EVENTS_DONE_STORAGE_KEY = "due-events-done-v1";
 /** 6 = lifestyle series use appearOnBoard + clock times. */
 export const DUE_EVENTS_SEED_VERSION = 6;
 
@@ -698,8 +700,26 @@ export function subscribeDueEvents(fn: () => void): () => void {
   return () => listeners.delete(fn);
 }
 
+function parseBoxDone(raw: string | null): Record<string, boolean> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as { boxDone?: Record<string, boolean> };
+    if (parsed?.boxDone && typeof parsed.boxDone === "object") {
+      return parsed.boxDone;
+    }
+  } catch {
+    /* ignore */
+  }
+  return {};
+}
+
 async function readStoreFromDisk(): Promise<DueEventsStore> {
-  const raw = await readStorage(DUE_EVENTS_STORAGE_KEY);
+  const [raw, doneRaw] = await Promise.all([
+    readStorage(DUE_EVENTS_STORAGE_KEY),
+    readStorage(DUE_EVENTS_DONE_STORAGE_KEY),
+  ]);
+  const separateDone = parseBoxDone(doneRaw);
+
   if (raw) {
     try {
       const parsed = JSON.parse(raw) as DueEventsStore;
@@ -707,13 +727,14 @@ async function readStoreFromDisk(): Promise<DueEventsStore> {
         const events = parsed.events
           .map(normalizeDueEvent)
           .filter((e): e is DueEvent => !!e);
+        const embeddedDone =
+          parsed.boxDone && typeof parsed.boxDone === "object"
+            ? parsed.boxDone
+            : {};
         return migrateStore({
           events,
           seedVersion: parsed.seedVersion,
-          boxDone:
-            parsed.boxDone && typeof parsed.boxDone === "object"
-              ? parsed.boxDone
-              : {},
+          boxDone: { ...embeddedDone, ...separateDone },
         });
       }
     } catch {
@@ -723,22 +744,54 @@ async function readStoreFromDisk(): Promise<DueEventsStore> {
   return {
     events: buildOfficialDueEventSeed(),
     seedVersion: DUE_EVENTS_SEED_VERSION,
-    boxDone: {},
+    boxDone: separateDone,
   };
 }
 
-async function persist(): Promise<void> {
+type EventsBlob = {
+  events: DueEvent[];
+  seedVersion?: number;
+};
+
+type BoxDoneBlob = {
+  boxDone: Record<string, boolean>;
+};
+
+async function persistEvents(): Promise<void> {
   if (!memoryStore) return;
-  await writeStorage(DUE_EVENTS_STORAGE_KEY, JSON.stringify(memoryStore));
+  const blob: EventsBlob = {
+    events: memoryStore.events,
+    seedVersion: memoryStore.seedVersion,
+  };
+  await writeStorage(DUE_EVENTS_STORAGE_KEY, JSON.stringify(blob));
+}
+
+async function persistBoxDone(): Promise<void> {
+  if (!memoryStore) return;
+  const blob: BoxDoneBlob = { boxDone: memoryStore.boxDone ?? {} };
+  await writeStorage(DUE_EVENTS_DONE_STORAGE_KEY, JSON.stringify(blob));
+}
+
+/** Persist events + done (rare full writes). Prefer persistEvents or persistBoxDone. */
+async function persist(): Promise<void> {
+  await Promise.all([persistEvents(), persistBoxDone()]);
 }
 
 export async function initDueEventsStore(): Promise<DueEventsStore> {
   if (typeof window === "undefined") return emptyStore();
   if (memoryStore) return memoryStore;
 
-  // Read only — do not persist on init. A write here bumps sync meta and
-  // makes local LWW-win over newer cloud on every refresh/restart.
+  // Read only for events — do not rewrite the events blob on init (LWW).
+  // One-time migrate of embedded boxDone into its own sync doc is OK.
   memoryStore = await readStoreFromDisk();
+  const doneRaw = await readStorage(DUE_EVENTS_DONE_STORAGE_KEY);
+  if (
+    !doneRaw &&
+    memoryStore.boxDone &&
+    Object.keys(memoryStore.boxDone).length > 0
+  ) {
+    await persistBoxDone();
+  }
   return memoryStore;
 }
 
@@ -969,7 +1022,7 @@ export async function toggleEventBox(boxId: string): Promise<boolean> {
   if (!memoryStore) return false;
   const next = !memoryStore.boxDone?.[boxId];
   memoryStore.boxDone = { ...(memoryStore.boxDone ?? {}), [boxId]: next };
-  await persist();
+  await persistBoxDone();
   notify();
   return next;
 }
@@ -1014,7 +1067,7 @@ export async function saveDueEvent(
   } else {
     memoryStore.events.push(next);
   }
-  await persist();
+  await persistEvents();
   notify();
   return next;
 }
@@ -1044,7 +1097,7 @@ export async function excludeEventOccurrence(
       recurrence: { frequency: "custom", occurrences },
     };
     memoryStore.events[idx] = next;
-    await persist();
+    await persistEvents();
     notify();
     return next;
   }
@@ -1052,7 +1105,7 @@ export async function excludeEventOccurrence(
   const excludedDates = mergeExcludedDates(event.excludedDates, [date]);
   const next: DueEvent = { ...event, excludedDates };
   memoryStore.events[idx] = next;
-  await persist();
+  await persistEvents();
   notify();
   return next;
 }
@@ -1077,7 +1130,7 @@ export async function restoreEventOccurrence(
     delete next.excludedDates;
   }
   memoryStore.events[idx] = next;
-  await persist();
+  await persistEvents();
   notify();
   return next;
 }
@@ -1087,7 +1140,7 @@ export async function deleteDueEvent(id: string): Promise<void> {
   if (!memoryStore) await initDueEventsStore();
   if (!memoryStore) return;
   memoryStore.events = memoryStore.events.filter((e) => e.id !== id);
-  await persist();
+  await persistEvents();
   notify();
 }
 
